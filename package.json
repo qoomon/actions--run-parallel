@@ -20,7 +20,6 @@
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/github": "^6.0.0",
-    "chalk": "^5.4.1",
     "yaml": "^2.7.1"
   }
 }

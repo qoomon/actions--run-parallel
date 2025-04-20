@@ -4,9 +4,6 @@ import YAML from "yaml";
 import child_process from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import chalk from 'chalk';
-
-chalk.level = 2;
 
 const githubToken = core.getInput("token", { required: true });
 // Get steps from input
@@ -102,7 +99,7 @@ function runStepsInParallel(steps) {
       const parsedStdoutChunkStack = parseLine(stdoutChunkStack);
       if(parsedStdoutChunkStack.level == 'info') {
         process.stdout.write(parsedStdoutChunkStack.line);
-         stepOutput[parsedStdoutChunkStack.jobId] += parsedStdoutChunkStack.line;
+        stepOutput[parsedStdoutChunkStack.jobId] += parsedStdoutChunkStack.line;
       }
 
       const parsedStderrtChunkStack = parseLine(stderrChunkStack);
@@ -116,10 +113,13 @@ function runStepsInParallel(steps) {
       // grouped output
       console.log('');
       Object.entries(stepOutput).forEach(([jobId, output]) => {
+        const formatedOutputLines = output.split('\n')
+          .map(line => line.replace(/^\[[^\]]+]\s*/, ''));
 
-        core.startGroup(output.split('\n').slice(-2)[0]);
-        console.log(output);
+        core.startGroup(' ' + formatedOutputLines.slice(-2)[0]);
+        console.log(formatedOutputLines.slice(1,-2).join('\n'));
         core.endGroup();
+        console.log(''); // Add an empty line after each group
       });
 
       if (exitCode !== 0){
@@ -130,9 +130,7 @@ function runStepsInParallel(steps) {
     });
 
     function parseLine(line) {
-      const rawLine = line.replaceAll(/\x1B\[\d+m/g, '');
-      const lineMatch = rawLine.trim().match(/^\[(?<jobId>Step\d+)]\s*(?<msg>.*)/)
-
+      const lineMatch = line.trim().match(/^\[(?<jobId>Step\d+)]\s*(?<msg>.*)/)
       if(!lineMatch) {
         return {
           jobId: null,
@@ -151,27 +149,15 @@ function runStepsInParallel(steps) {
       }
 
       const jobId = lineMatch.groups.jobId;
-      const jobNumber = parseInt(jobId.match(/\d+$/)[0], 10);
       const msg = lineMatch.groups.msg
-        .replace(/^⭐ Run Main/, '▶ Run - Main')
-        .replace(/^✅  Success/, '🟢 Success')
-        .replace(/^❌  Failure/, '🔴 Failure')
+        .replace(/^⭐ Run Main/, '▷ Run')
+        .replace(/^✅  Success - Main/, '⚪️ Run') // ✔︎
+        .replace(/^❌  Failure - Main/, '🔴 Failure')
         .replace(/^\|\s*/, '') ;
-
-      const stepColors = [
-        chalk.red,
-        chalk.green,
-        chalk.yellow,
-        chalk.blue,
-        chalk.magenta,
-        chalk.cyan,
-        chalk.white,
-      ];
-      const stepColor = stepColors[jobNumber % stepColors.length];
 
       return {
         jobId,
-        line: stepColor(`[${jobId}]`) + ` ${msg}\n`,
+        line: `[${jobId}] ${msg}\n`,
         level: 'info'
       }
     }

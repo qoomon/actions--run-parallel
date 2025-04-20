@@ -1,8 +1,8 @@
 name: Parallel Steps
-description: GitHub Action to run steps in parallel
+description: GitHub Action to run multiple steps in parallel
 author: qoomon
 branding:
-  icon: unlock
+  icon: grid
   color: blue
 
 inputs:
