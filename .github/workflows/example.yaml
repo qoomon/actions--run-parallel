@@ -19,7 +19,6 @@ jobs:
             - run: echo Step5
             - run: echo Step6
             - run: echo Step7
-            - name: Step8
-              uses: actions/github-script@v7
+            - uses: actions/github-script@v7
               with:
                 script: console.log('Step8')
