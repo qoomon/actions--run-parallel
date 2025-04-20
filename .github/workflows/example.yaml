@@ -7,9 +7,7 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: echo moin moin
-      - uses: ./
+      - uses: qoomon/actions--parallel-steps@main
         with:
           steps: |
             - run: echo Step0
