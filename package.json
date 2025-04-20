@@ -1,0 +1,26 @@
+{
+  "name": "actions--run-parallel",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "```shell gh extension install https://github.com/nektos/gh-act ```",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qoomon/actions--run-parallel.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/qoomon/actions--run-parallel/issues"
+  },
+  "homepage": "https://github.com/qoomon/actions--run-parallel#readme",
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.0",
+    "chalk": "^5.4.1",
+    "yaml": "^2.7.1"
+  }
+}

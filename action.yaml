@@ -1,0 +1,23 @@
+name: Parallel Steps
+description: GitHub Action to run steps in parallel
+author: qoomon
+branding:
+  icon: unlock
+  color: blue
+
+inputs:
+  token:
+    description: GitHub token
+    default: ${{ github.token }}
+    required: true
+  steps:
+    description: Parallel steps to run
+    required: true
+
+outputs:
+  steps:
+    description: Step output
+
+runs:
+  using: node20
+  main: main.js
