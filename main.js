@@ -4,6 +4,7 @@ import YAML from "yaml";
 import child_process from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import readline from 'node:readline';
 
 const githubToken = core.getInput("token", { required: true });
 // Get steps from input
@@ -27,11 +28,11 @@ await runStepsInParallel(steps).catch(() => {
 
 // ----------------------------------------------------------------
 //
-function runStepsInParallel(steps) {
+async function runStepsInParallel(steps) {
   const worklfowFile = `${process.env.RUNNER_TEMP ?? '/tmp'}/${github.context.action}.yaml`;
   const workflow = {
     on: "workflow_dispatch",
-    jobs:  Object.assign({}, ...steps.map((step, index) => ({
+    jobs: Object.assign({}, ...steps.map((step, index) => ({
       [`Step${index}`]: {
         "runs-on": "host",
         "steps": [step]
@@ -41,7 +42,13 @@ function runStepsInParallel(steps) {
   fs.mkdirSync(path.dirname(worklfowFile), { recursive: true });
   fs.writeFileSync(worklfowFile, YAML.stringify(workflow));
 
-  core.startGroup("Output");
+  const stepResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
+    stepId: jobId,
+    step: null,
+    status: null,
+    output: "",
+    executionTime: null,
+  }]));
 
   const workflowProcess = child_process.spawn("gh", [
     "act",
@@ -50,76 +57,64 @@ function runStepsInParallel(steps) {
     "--action-offline-mode",
     "--log-prefix-job-id",
     "--actor", github.context.actor,
-    "-s", `GITHUB_TOKEN=${githubToken}`
+    "-s", `GITHUB_TOKEN=${githubToken}`,
     // "--env-file", envFilePath,
     // "--eventpath", eventFilePath
+    "--json",
   ], {
     env: {
       ...process.env,
     },
   });
 
+  {
+    for (const [jobId, job] of Object.entries(workflow.jobs)) {
+      console.log('');
+      const step = job.steps[0];
+      let stepName = step.name
+      if(!stepName){
+        if(step.uses) {
+          stepName = step.uses;
+        } else {
+          stepName = step.run.split('\n')[0];
+        }
+      }
+      core.startGroup(`[${jobId}] Run ${stepName}`);
+      console.log(YAML.stringify({
+        ...step,
+        name: undefined,
+        uses: undefined,
+      }).replace(/\n$/, ''))
+      core.endGroup();
+    }
+  }
+
+  console.log('');
+  core.startGroup("Output");
+
+  readline.createInterface({input: workflowProcess.stdout, crlfDelay: Infinity})
+    .on('line', newLineHandler(workflowProcess.stdout, stepResults));
+
+  readline.createInterface({input: workflowProcess.stderr, crlfDelay: Infinity})
+    .on('line', newLineHandler(workflowProcess.stderr, stepResults));
+
+  workflowProcess.on("exit", () => {
+    core.endGroup();
+  });
 
   return new Promise((resolve, reject) => {
-    let stepOutput = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, ""]));
 
-    let stdoutChunkStack = "";
-    workflowProcess.stdout.on("data", (chunk) => {
-      stdoutChunkStack += chunk.toString();
-      const stdoutChunkStackLines = stdoutChunkStack.split("\n")
-      for (const line of stdoutChunkStackLines.slice(0, -1)) {
-        const parsedLine = parseLine(line);
-        if(parsedLine.level == 'info') {
-          process.stdout.write(parsedLine.line);
-          stepOutput[parsedLine.jobId] += parsedLine.line;
-        }
-      }
-
-      stdoutChunkStack = stdoutChunkStackLines.slice(-1)[0] ?? "";
-    });
-
-    let stderrChunkStack = "";
-    workflowProcess.stderr.on("data", (chunk) => {
-      stderrChunkStack += chunk.toString();
-      const stderrChunkStackLines = stderrChunkStack.split("\n")
-      for (const line of stderrChunkStackLines.slice(0, -1)) {
-        const parsedLine = parseLine(line);
-        if(parsedLine.level == 'info') {
-          process.stderr.write(parsedLine.line);
-          stepOutput[parsedLine.jobId] += parsedLine.line;
-        }
-      }
-
-      stderrChunkStack = stderrChunkStackLines.slice(-1)[0] ?? "";
-    });
-
-    // TODO https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
-    // p.on("close", resolve);
-    workflowProcess.on("exit", (exitCode) => {
-      const parsedStdoutChunkStack = parseLine(stdoutChunkStack);
-      if(parsedStdoutChunkStack.level == 'info') {
-        process.stdout.write(parsedStdoutChunkStack.line);
-        stepOutput[parsedStdoutChunkStack.jobId] += parsedStdoutChunkStack.line;
-      }
-
-      const parsedStderrtChunkStack = parseLine(stderrChunkStack);
-      if(parsedStderrtChunkStack.level == 'info') {
-        process.stderr.write(parsedStderrtChunkStack.line);
-        stepOutput[parsedStderrtChunkStack.jobId] += parsedStderrtChunkStack.line;
-      }
-
-      core.endGroup();
-
-      // grouped output
-      console.log('');
-      Object.entries(stepOutput).forEach(([jobId, output]) => {
-        const formatedOutputLines = output.split('\n')
-          .map(line => line.replace(/^\[[^\]]+]\s*/, ''));
-
-        core.startGroup(' ' + formatedOutputLines.slice(-2)[0]);
-        console.log(formatedOutputLines.slice(1,-2).join('\n'));
-        core.endGroup();
-        console.log(''); // Add an empty line after each group
+    // close vs exit => https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
+    workflowProcess.on("close", (exitCode) => {
+        // grouped output
+        // TODO HANDLE ::set-output:: and co
+        console.log('');
+        Object.entries(stepResults).forEach(([stepId, stepResult]) => {
+          let groupHeadline = `[${stepResult.stepId}] ` + buildStepStatusLine(stepResult);
+          core.startGroup(groupHeadline);
+          console.log(stepResult.output.replace(/\n$/, ''));
+          core.endGroup();
+          console.log(''); // Add an empty line after each group
       });
 
       if (exitCode !== 0){
@@ -128,38 +123,83 @@ function runStepsInParallel(steps) {
         resolve();
       }
     });
+  })
+}
 
-    function parseLine(line) {
-      const lineMatch = line.trim().match(/^\[(?<jobId>Step\d+)]\s*(?<msg>.*)/)
-      if(!lineMatch) {
-        return {
-          jobId: null,
-          line
-        };
-      }
-
-      if(!(lineMatch.groups.msg.startsWith("⭐ Run Main")
-        || lineMatch.groups.msg.startsWith("|")
-        || lineMatch.groups.msg.startsWith("✅  Success - Main")
-        || lineMatch.groups.msg.startsWith("❌  Failure - Main"))) {
-        return {
-          jobId: null,
-          line
-        };
-      }
-
-      const jobId = lineMatch.groups.jobId;
-      const msg = lineMatch.groups.msg
-        .replace(/^⭐ Run Main/, '▷ Run')
-        .replace(/^✅  Success - Main/, '⚪️ Run') // ✔︎
-        .replace(/^❌  Failure - Main/, '🔴 Failure')
-        .replace(/^\|\s*/, '') ;
-
-      return {
-        jobId,
-        line: `[${jobId}] ${msg}\n`,
-        level: 'info'
-      }
+function newLineHandler(outputStream, stepResults) {
+  return (line) => {
+    try {
+      line = JSON.parse(line);
+    } catch (error) {
+      return;
     }
-  });
+    if(!line.jobID) {
+      return;
+    }
+
+    const stepResult = stepResults[line.jobID];
+
+    if(line.stage === "Pre") {
+      stepResult.step = line.step;
+      if(line.level === 'info' || line.level === 'warn' || line.level === 'error') {
+        const msg = adjustMessage(line.msg);
+        console.log(`[${line.jobID}] [${line.stage}] ${msg}`);
+        stepResult.output += `[${line.stage}] ${ensureNewline(msg)}`;
+      }
+    } else if(line.stage === "Main") {
+      stepResult.step = line.step;
+      if(line.raw_output) {
+        process.stdout.write(`[${line.jobID}] ${ensureNewline(line.msg)}`);
+        stepResult.output += `${line.msg}`;
+      }
+    } else if(line.stage === "Post") {
+      if(line.level === 'info' || line.level === 'warn' || line.level === 'error') {
+        const msg = adjustMessage(line.msg);
+        console.log(`[${line.jobID}] [${line.stage}] ${msg}`);
+        stepResult.output += `[${line.stage}] ${ensureNewline(msg)}`;
+      }
+    } else if (line.jobResult) {
+      stepResult.status = line.jobResult;
+      stepResult.executionTime = line.executionTime;
+      console.log(`[${line.jobID}] ${buildStepStatusLine(stepResult)}`);
+    }
+  }
+}
+
+function adjustMessage(msg) {
+  return msg.replace(/^  ☁\s+/, '');
+}
+
+function buildStepStatusLine(stepResult) {
+  let line = stepResult.status === 'success' ? '⚪️' : '🔴';
+  line += ` Run ${stepResult.step}`
+  if(stepResult.executionTime) {
+    line +=` [${formatMilliseconds(stepResult.executionTime)})]`
+  }
+  return line
+}
+
+function ensureNewline(text) {
+  return text.endsWith('\n') ? text : text + '\n';
+}
+
+function formatMilliseconds(milliseconds) {
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+
+  const parts = [];
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes}m`);
+  }
+  if (seconds >= 0 || parts.length === 0) {
+    parts.push(`${seconds}s`);
+  }
+
+  return parts.join(" ");
 }

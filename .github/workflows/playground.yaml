@@ -16,7 +16,7 @@ jobs:
             - run: echo outout Step4
             - run: echo outout Step5
             - run: echo outout Step6
-            - run: echo outout Step7 && exit 7
+            - run: echo outout Step7
             - uses: actions/github-script@v7
               with:
                 script: console.log('outout Step8')
