@@ -6,6 +6,7 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
+      - run: pwd
       - uses: qoomon/actions--parallel-steps@main
         with:
           steps: |
@@ -13,7 +14,9 @@ jobs:
             - run: echo Step1
             - run: |
                 echo Step2
+                pwd
                 echo Step2 > step2.txt
+                ls -lachs
             - run: |
                 echo Step3
             - run: echo Step4
@@ -23,4 +26,4 @@ jobs:
             - uses: actions/github-script@v7
               with:
                 script: console.log('Step8')
-      - run: ls -1
+      - run: ls -lachs

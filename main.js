@@ -35,7 +35,10 @@ async function runStepsInParallel(steps) {
     jobs: Object.assign({}, ...steps.map((step, index) => ({
       [`Step${index}`]: {
         "runs-on": "host",
-        "steps": [step]
+        "steps": [
+          step,
+          {run: `mv * .* '${process.cwd()}'`},
+        ]
       }
     })))
   };
