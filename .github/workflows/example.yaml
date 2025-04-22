@@ -16,7 +16,6 @@ jobs:
                 echo Step2 > step2.txt
             - run: |
                 echo Step3
-                cat step2.txt
             - run: echo Step4
             - run: echo Step5
             - run: echo Step6
@@ -24,3 +23,4 @@ jobs:
             - uses: actions/github-script@v7
               with:
                 script: console.log('Step8')
+      - run: cat step2.txt
