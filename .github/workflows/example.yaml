@@ -11,8 +11,12 @@ jobs:
           steps: |
             - run: echo Step0
             - run: echo Step1
-            - run: echo Step2
-            - run: echo Step3
+            - run: |
+                echo Step2
+                echo Step2 > step2.txt
+            - run: |
+                echo Step3
+                cat step2.txt
             - run: echo Step4
             - run: echo Step5
             - run: echo Step6
