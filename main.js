@@ -82,7 +82,7 @@ async function runStepsInParallel(steps) {
   {
     for (const [jobId, job] of Object.entries(workflow.jobs)) {
       console.log('');
-      const step = job.steps[0];
+      const step = job.steps.at(-1);
       let stepName = step.name
       if(!stepName){
         if(step.uses) {
