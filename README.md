@@ -25,3 +25,6 @@ jobs:
                 script: console.log('Step2')
 ```
 
+## Workflow Run Examples
+https://github.com/qoomon/actions--parallel-steps/actions/workflows/example.yaml
+
