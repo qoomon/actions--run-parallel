@@ -52,11 +52,6 @@ async function runStepsInParallel(steps) {
   fs.mkdirSync(path.dirname(workflowFile), { recursive: true });
   fs.writeFileSync(workflowFile, YAML.stringify(workflow));
   
-  for (const [jobId, job] of Object.entries(workflow.jobs)) {
-    console.log('');
-    logStep(jobId, job);
-  }
-
   const workflowProcess = child_process.spawn("gh", [
     "act",
     "--workflows", workflowFile,
@@ -108,6 +103,9 @@ async function runStepsInParallel(steps) {
       }
   
       const jobResult = jobResults[line.jobID];
+      if(!jobResult.output) {
+        
+      }
   
       if(line.stage === "Pre") {
         if(line.level === 'info' || line.level === 'warn' || line.level === 'error') {
