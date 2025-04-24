@@ -53,9 +53,7 @@ async function runStepsInParallel(steps) {
   fs.mkdirSync(path.dirname(worklfowFile), { recursive: true });
   fs.writeFileSync(worklfowFile, YAML.stringify(workflow));
 
-  const stepResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
-    stepId: jobId,
-    step: null,
+  const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
     status: null,
     output: "",
     executionTime: null,
@@ -73,107 +71,76 @@ async function runStepsInParallel(steps) {
     // "--eventpath", eventFilePath
     "--json",
     "--bind",
-  ], {
-    env: {
-      ...process.env,
-    },
-  });
+  ], { env: process.env });
 
-  {
-    for (const [jobId, job] of Object.entries(workflow.jobs)) {
-      console.log('');
-      const step = job.steps.at(-1);
-      let stepName = step.name
-      if(!stepName){
-        if(step.uses) {
-          stepName = step.uses;
-        } else {
-          stepName = step.run.split('\n')[0];
-        }
-      }
-      core.startGroup(`[${jobId}] Run ${stepName}`);
-      console.log(YAML.stringify({
-        ...step,
-        name: undefined,
-        uses: undefined,
-      }).replace(/\n$/, ''))
-      core.endGroup();
-    }
+  for (const [jobId, job] of Object.entries(workflow.jobs)) {
+    console.log('');
+    logStep(jobId, job);
   }
 
   console.log('');
   core.startGroup("Output");
 
   readline.createInterface({input: workflowProcess.stdout, crlfDelay: Infinity})
-    .on('line', newLineHandler(workflowProcess.stdout, stepResults));
+    .on('line', newLineHandler(workflowProcess.stdout, jobResults));
 
   readline.createInterface({input: workflowProcess.stderr, crlfDelay: Infinity})
-    .on('line', newLineHandler(workflowProcess.stderr, stepResults));
+    .on('line', newLineHandler(workflowProcess.stderr, jobResults));
 
   workflowProcess.on("exit", () => {
     core.endGroup();
+    
+    // grouped output
+    // TODO HANDLE ::set-output:: and co
+    for (const [jobId, job] of Object.entries(workflow.jobs)) {
+      console.log('');
+      logStep(jobId, job, jobResults[jobId]);
+    }
   });
 
   return new Promise((resolve, reject) => {
-
     // close vs exit => https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
     workflowProcess.on("close", (exitCode) => {
-        // grouped output
-        // TODO HANDLE ::set-output:: and co
-        console.log('');
-        Object.entries(stepResults).forEach(([stepId, stepResult]) => {
-          let groupHeadline = `[${stepResult.stepId}] ` + buildStepStatusLine(stepResult);
-          core.startGroup(groupHeadline);
-          console.log(stepResult.output.replace(/\n$/, ''));
-          core.endGroup();
-          console.log(''); // Add an empty line after each group
-      });
-
-      if (exitCode !== 0){
-        reject();
-      } else {
-        resolve();
-      }
+      if (exitCode !== 0) reject() 
+      else resolve();
     });
   })
-}
-
-function newLineHandler(outputStream, stepResults) {
-  return (line) => {
-    try {
-      line = JSON.parse(line);
-    } catch (error) {
-      return;
-    }
-    if(!line.jobID) {
-      return;
-    }
-
-    const stepResult = stepResults[line.jobID];
-
-    if(line.stage === "Pre") {
-      stepResult.step = line.step;
-      if(line.level === 'info' || line.level === 'warn' || line.level === 'error') {
-        const msg = adjustMessage(line.msg);
-        console.log(`[${line.jobID}] [${line.stage}] ${msg}`);
-        stepResult.output += `[${line.stage}] ${ensureNewline(msg)}`;
+  
+  function newLineHandler(outputStream, jobResults) {
+    return (line) => {
+      try {
+        line = JSON.parse(line);
+      } catch (error) {
+        return;
       }
-    } else if(line.stage === "Main") {
-      stepResult.step = line.step;
-      if(line.raw_output) {
-        process.stdout.write(`[${line.jobID}] ${ensureNewline(line.msg)}`);
-        stepResult.output += `${line.msg}`;
+      if(!line.jobID) {
+        return;
       }
-    } else if(line.stage === "Post") {
-      if(line.level === 'info' || line.level === 'warn' || line.level === 'error') {
-        const msg = adjustMessage(line.msg);
-        console.log(`[${line.jobID}] [${line.stage}] ${msg}`);
-        stepResult.output += `[${line.stage}] ${ensureNewline(msg)}`;
+  
+      const jobResult = jobResults[line.jobID];
+  
+      if(line.stage === "Pre") {
+        if(line.level === 'info' || line.level === 'warn' || line.level === 'error') {
+          const msg = adjustMessage(line.msg);
+          console.log(`[${line.jobID}] [${line.stage}] ${msg}`);
+          jobResult.output += `[${line.stage}] ${ensureNewline(msg)}`;
+        }
+      } else if(line.stage === "Main") {
+        if(line.raw_output) {
+          process.stdout.write(`[${line.jobID}] ${ensureNewline(line.msg)}`);
+          jobResult.output += `${line.msg}`;
+        }
+      } else if(line.stage === "Post") {
+        if(line.level === 'info' || line.level === 'warn' || line.level === 'error') {
+          const msg = adjustMessage(line.msg);
+          console.log(`[${line.jobID}] [${line.stage}] ${msg}`);
+          jobResult.output += `[${line.stage}] ${ensureNewline(msg)}`;
+        }
+      } else if (line.jobResult) {
+        jobResult.status = line.jobResult;
+        jobResult.executionTime = line.executionTime;
+        console.log(buildStepHeadline(line.jobID, workflow.jobs[line.jobID], jobResult));
       }
-    } else if (line.jobResult) {
-      stepResult.status = line.jobResult;
-      stepResult.executionTime = line.executionTime;
-      console.log(`[${line.jobID}] ${buildStepStatusLine(stepResult)}`);
     }
   }
 }
@@ -182,13 +149,51 @@ function adjustMessage(msg) {
   return msg.replace(/^  ☁\s+/, '');
 }
 
-function buildStepStatusLine(stepResult) {
-  let line = stepResult.status === 'success' ? '⚪️' : '🔴';
-  line += ` Run ${stepResult.step}`
-  if(stepResult.executionTime) {
-    line +=` [${formatMilliseconds(stepResult.executionTime)})]`
+function logStep(jobId, job, jobResult) {
+  
+  core.startGroup(buildStepHeadline(jobId, job, jobResult));
+  
+  const step = job.steps.at(-1);
+  console.log(YAML.stringify({
+    ...step,
+    name: undefined,
+    uses: undefined,
+  }));
+
+  if (jobResult) {
+    console.log(jobResult.output);
   }
-  return line
+  
+  core.endGroup();
+}
+
+function buildStepHeadline(jobId, job, jobResult) {
+  let groupHeadline = `[${jobId}]`;
+  
+  if(jobResult){
+    groupHeadline += ' ' + (jobResult.status === 'success' ? '⚪️' : '🔴');
+  }
+  
+  const step = job.steps.at(-1);
+  groupHeadline += ` Run ${buildStepDisplayName(step)}`;
+
+  if(jobResult?.executionTime) {
+    groupHeadline +=` [${formatMilliseconds(jobResult.executionTime)})]`
+  }
+  
+  return groupHeadline;
+}
+
+function buildStepDisplayName(step) {
+  let displayName = step.name
+  if(!displayName){
+    if(step.uses) {
+      displayName = step.uses;
+    } else {
+      displayName = step.run.split('\n')[0].slice(0, 80);
+    }
+  }
+  return displayName;
 }
 
 function ensureNewline(text) {
