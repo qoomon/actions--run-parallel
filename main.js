@@ -142,7 +142,7 @@ function logStep(jobId, job, jobResult) {
   core.startGroup(buildStepHeadline(jobId, job, jobResult));
   
   const step = job.steps.at(-1);
-  const stepConfigPadding = '⏐ '
+  const stepConfigPadding = '︳ '
   console.log(stepConfigPadding + YAML.stringify({
     ...step,
     name: undefined,
