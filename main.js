@@ -163,7 +163,7 @@ function buildStepHeadline(job, jobResult) {
   if(jobResult){
     groupHeadline += (jobResult.status === 'success' ? '⚪️' : '🔴') + ' ';
   } else {
-    groupHeadline += '➲ '
+    groupHeadline += '▶️ '
   }
   
   const step = job.steps.at(-1);
