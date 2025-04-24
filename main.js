@@ -62,13 +62,13 @@ async function runStepsInParallel(steps) {
     "--workflows", workflowFile,
     "--platform", "host=-self-hosted",
     "--action-offline-mode",
-    "--log-prefix-job-id",
     "--actor", github.context.actor,
     "-s", `GITHUB_TOKEN=${githubToken}`,
     // "--env-file", envFilePath,
     // "--eventpath", eventFilePath
+    "--bind", // do not copy working directory files
+    "--log-prefix-job-id",
     "--json",
-    "--bind",
   ], { env: process.env });
   
   const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
