@@ -39,7 +39,7 @@ async function runStepsInParallel(steps) {
         "runs-on": "host",
         "steps": [
           {
-            name: "Use host working directory",
+            name: "Link job working directory to host working directory",
             run : [
               `rm -rf $PWD`,
               `ln -s '${workingDirectory}' $PWD`,
