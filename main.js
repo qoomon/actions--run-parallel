@@ -104,7 +104,8 @@ async function runStepsInParallel(steps) {
   
       const jobResult = jobResults[line.jobID];
       if(!jobResult.output) {
-        
+        const startLine = buildStepHeadline(workflow.jobs[line.jobID]);
+        console.log(`[${line.jobID}] ` + startLine);
       }
   
       if(line.stage === "Pre") {
@@ -127,7 +128,7 @@ async function runStepsInParallel(steps) {
       } else if (line.jobResult) {
         jobResult.status = line.jobResult;
         jobResult.executionTime = line.executionTime;
-        console.log(buildStepHeadline(line.jobID, workflow.jobs[line.jobID], jobResult));
+        console.log(`[${line.jobID}] ` + buildStepHeadline(workflow.jobs[line.jobID], jobResult));
       }
     }
   }
@@ -138,9 +139,8 @@ function adjustMessage(msg) {
 }
 
 function logStep(jobId, job, jobResult) {
-  
-  core.startGroup(buildStepHeadline(jobId, job, jobResult));
-  
+  core.startGroup(`[${jobId}] ` + buildStepHeadline(job, jobResult));
+
   const step = job.steps.at(-1);
   const stepConfigPadding = '⡇ '
   console.log(stepConfigPadding + YAML.stringify({
@@ -156,15 +156,17 @@ function logStep(jobId, job, jobResult) {
   core.endGroup();
 }
 
-function buildStepHeadline(jobId, job, jobResult) {
-  let groupHeadline = `[${jobId}]`;
+function buildStepHeadline(job, jobResult) {
+  let groupHeadline = '';
   
   if(jobResult){
-    groupHeadline += ' ' + (jobResult.status === 'success' ? '⚪️' : '🔴');
+    groupHeadline += (jobResult.status === 'success' ? '⚪️' : '🔴') + ' ';
+  } else {
+    groupHeadline += '➲ '
   }
   
   const step = job.steps.at(-1);
-  groupHeadline += ` Run ${buildStepDisplayName(step)}`;
+  groupHeadline += `Run ${buildStepDisplayName(step)}`;
 
   if(jobResult?.executionTime) {
     groupHeadline +=` [${formatMilliseconds(jobResult.executionTime)})]`
