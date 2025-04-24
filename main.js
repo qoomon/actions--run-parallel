@@ -142,11 +142,11 @@ function logStep(jobId, job, jobResult) {
   core.startGroup(buildStepHeadline(jobId, job, jobResult));
   
   const step = job.steps.at(-1);
-  console.log(YAML.stringify({
+  console.log('• '+ YAML.stringify({
     ...step,
     name: undefined,
     uses: undefined,
-  }));
+  }).split('\n').join('\n  '));
 
   if (jobResult) {
     console.log(jobResult.output.replace(/\n$/, ''));
