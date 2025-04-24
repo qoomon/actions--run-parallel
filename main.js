@@ -146,7 +146,7 @@ function logStep(jobId, job, jobResult) {
     ...step,
     name: undefined,
     uses: undefined,
-  }).split('\n').join('\n| '));
+  }).split('\n').join('\n| ').replace(/| $/, ''));
 
   if (jobResult) {
     console.log(jobResult.output.replace(/\n$/, ''));
