@@ -149,7 +149,7 @@ function logStep(jobId, job, jobResult) {
   }));
 
   if (jobResult) {
-    console.log(jobResult.output);
+    console.log(jobResult.output.replace(/\n$/, ''));
   }
   
   core.endGroup();
