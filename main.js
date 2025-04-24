@@ -30,14 +30,22 @@ await runStepsInParallel(steps).catch(() => {
 //
 async function runStepsInParallel(steps) {
   const worklfowFile = `${process.env.RUNNER_TEMP ?? '/tmp'}/${github.context.action}.yaml`;
+  const workingDirectory = process.cwd();
+
   const workflow = {
     on: "workflow_dispatch",
     jobs: Object.assign({}, ...steps.map((step, index) => ({
       [`Step${index}`]: {
         "runs-on": "host",
         "steps": [
+          {
+            name: "Use host working directory",
+            run : [
+              `rm -rf $PWD`,
+              `ln -s '${workingDirectory}' $PWD`,
+              ].join('\n'),
+          },
           step,
-          {run: `mv * .* '${process.cwd()}'`},
         ]
       }
     })))
@@ -64,6 +72,7 @@ async function runStepsInParallel(steps) {
     // "--env-file", envFilePath,
     // "--eventpath", eventFilePath
     "--json",
+    "--bind",
   ], {
     env: {
       ...process.env,
