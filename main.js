@@ -22,7 +22,6 @@ child_process.execSync("gh extension install https://github.com/nektos/gh-act", 
   },
 });
 
-
 await runStepsInParallel(steps).catch(() => {
   core.setFailed("One or more parallel steps failed");
 });
@@ -30,9 +29,8 @@ await runStepsInParallel(steps).catch(() => {
 // ----------------------------------------------------------------
 //
 async function runStepsInParallel(steps) {
-  const worklfowFile = `${process.env.RUNNER_TEMP ?? '/tmp'}/${github.context.action}.yaml`;
+  const workflowFile = `${process.env.RUNNER_TEMP ?? '/tmp'}/${github.context.action}.yaml`;
   const workingDirectory = process.cwd();
-
   const workflow = {
     on: "workflow_dispatch",
     jobs: Object.assign({}, ...steps.map((step, index) => ({
@@ -51,18 +49,17 @@ async function runStepsInParallel(steps) {
       }
     })))
   };
-  fs.mkdirSync(path.dirname(worklfowFile), { recursive: true });
-  fs.writeFileSync(worklfowFile, YAML.stringify(workflow));
-
-  const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
-    status: null,
-    output: "",
-    executionTime: null,
-  }]));
+  fs.mkdirSync(path.dirname(workflowFile), { recursive: true });
+  fs.writeFileSync(workflowFile, YAML.stringify(workflow));
+  
+  for (const [jobId, job] of Object.entries(workflow.jobs)) {
+    console.log('');
+    logStep(jobId, job);
+  }
 
   const workflowProcess = child_process.spawn("gh", [
     "act",
-    "--workflows", worklfowFile,
+    "--workflows", workflowFile,
     "--platform", "host=-self-hosted",
     "--action-offline-mode",
     "--log-prefix-job-id",
@@ -73,33 +70,31 @@ async function runStepsInParallel(steps) {
     "--json",
     "--bind",
   ], { env: process.env });
-
-  for (const [jobId, job] of Object.entries(workflow.jobs)) {
-    console.log('');
-    logStep(jobId, job);
-  }
+  
+  const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
+    status: null,
+    output: "",
+    executionTime: null,
+  }]));
 
   console.log('');
   core.startGroup("Output");
 
   readline.createInterface({input: workflowProcess.stdout, crlfDelay: Infinity})
     .on('line', newLineHandler(workflowProcess.stdout, jobResults));
-
   readline.createInterface({input: workflowProcess.stderr, crlfDelay: Infinity})
     .on('line', newLineHandler(workflowProcess.stderr, jobResults));
 
   workflowProcess.on("exit", () => {
-    core.endGroup();
-    
-    // grouped output
-    // TODO HANDLE ::set-output:: and co
+    core.endGroup(); // "Output"
+
     for (const [jobId, job] of Object.entries(workflow.jobs)) {
       console.log('');
       logStep(jobId, job, jobResults[jobId]);
     }
   });
 
-  await waitForChildProcessClose(workflowProcess);
+  await childProcessClosed(workflowProcess);
   
   function newLineHandler(outputStream, jobResults) {
     return (line) => {
@@ -216,7 +211,7 @@ function formatMilliseconds(milliseconds) {
   return parts.join(" ");
 }
 
-async function waitForChildProcessClose(childProcess){
+async function childProcessClosed(childProcess){
   return new Promise((resolve, reject) => {
     // close vs exit => https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
     childProcess.on("close", (exitCode) => {
