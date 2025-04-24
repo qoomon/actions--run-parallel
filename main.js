@@ -21,7 +21,8 @@ child_process.execSync("gh extension install https://github.com/nektos/gh-act", 
     GH_TOKEN: githubToken,
   },
 });
-// Run all steps in parallel
+
+
 await runStepsInParallel(steps).catch(() => {
   core.setFailed("One or more parallel steps failed");
 });
@@ -98,13 +99,7 @@ async function runStepsInParallel(steps) {
     }
   });
 
-  return new Promise((resolve, reject) => {
-    // close vs exit => https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
-    workflowProcess.on("close", (exitCode) => {
-      if (exitCode !== 0) reject() 
-      else resolve();
-    });
-  })
+  await waitForChildProcessClose(workflowProcess);
   
   function newLineHandler(outputStream, jobResults) {
     return (line) => {
@@ -219,4 +214,14 @@ function formatMilliseconds(milliseconds) {
   }
 
   return parts.join(" ");
+}
+
+async function waitForChildProcessClose(childProcess){
+  return new Promise((resolve, reject) => {
+    // close vs exit => https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
+    childProcess.on("close", (exitCode) => {
+      if (exitCode !== 0) reject() 
+      else resolve();
+    });
+  })
 }
