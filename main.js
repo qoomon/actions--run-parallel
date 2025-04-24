@@ -68,7 +68,7 @@ async function runStepsInParallel(steps) {
   
   const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
     status: null,
-    output: "",
+    output: null,
     executionTime: null,
   }]));
 
@@ -103,9 +103,10 @@ async function runStepsInParallel(steps) {
       }
   
       const jobResult = jobResults[line.jobID];
-      if(!jobResult.output) {
+      if(jobResult.output === null) {
         const startLine = buildStepHeadline(workflow.jobs[line.jobID]);
         console.log(`[${line.jobID}] ` + startLine);
+        jobResult.output = "";
       }
   
       if(line.stage === "Pre") {
