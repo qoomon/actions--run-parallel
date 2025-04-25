@@ -211,11 +211,14 @@ function formatMilliseconds(milliseconds) {
   if (minutes > 0) {
     parts.push(`${minutes}m`);
   }
-  if (seconds >= 0 || parts.length === 0) {
+  if (seconds > 0) {
     parts.push(`${seconds}s`);
   }
+  if (parts.length) {
+    return parts.join(" ");
+  }
 
-  return parts.join(" ");
+  return `${milliseconds}ms`;
 }
 
 async function childProcessClosed(childProcess){
