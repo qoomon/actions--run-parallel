@@ -133,7 +133,6 @@ async function runStepsInParallel(steps) {
       } else if (line.jobResult) {
         jobResult.endTime = new Date();
         jobResult.status = line.jobResult;
-        
         console.log(`[${line.jobID}] ` + buildStepHeadline(workflow.jobs[line.jobID], jobResult));
       }
     }
