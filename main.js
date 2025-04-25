@@ -16,10 +16,7 @@ if (!Array.isArray(steps)) {
 
 // Install gh-act extension
 child_process.execSync("gh extension install https://github.com/nektos/gh-act", {
-  env: {
-    ...process.env,
-    GH_TOKEN: githubToken,
-  },
+  env: {...process.env, GH_TOKEN: githubToken},
 });
 
 await runStepsInParallel(steps).catch(() => {
@@ -27,7 +24,7 @@ await runStepsInParallel(steps).catch(() => {
 });
 
 // ----------------------------------------------------------------
-//
+
 async function runStepsInParallel(steps) {
   const workflowFile = `${process.env.RUNNER_TEMP ?? '/tmp'}/${github.context.action}.yaml`;
   const workingDirectory = process.cwd();
@@ -110,7 +107,7 @@ async function runStepsInParallel(steps) {
       const jobResult = jobResults[line.jobID];
       if(!jobResult.startTime) {
         jobResult.startTime = new Date();
-        console.log(`[${line.jobID}] ` + buildStepHeadline(workflow.jobs[line.jobID]));
+        console.log(buildStepHeadline(line.jobID, workflow.jobs[line.jobID]));
       }
    
       if(line.stage === "Pre") {
@@ -133,7 +130,7 @@ async function runStepsInParallel(steps) {
       } else if (line.jobResult) {
         jobResult.endTime = new Date();
         jobResult.status = line.jobResult;
-        console.log(`[${line.jobID}] ` + buildStepHeadline(workflow.jobs[line.jobID], jobResult));
+        console.log(buildStepHeadline(line.jobID, workflow.jobs[line.jobID], jobResult));
       }
     }
   }
@@ -144,16 +141,27 @@ function adjustMessage(msg) {
 }
 
 function logStep(jobId, job, jobResult) {
-  core.startGroup(`[${jobId}] ` + buildStepHeadline(job, jobResult));
+  core.startGroup(' ' + buildStepHeadline(jobId, job, jobResult));
 
   const step = job.steps.at(-1);
-  const stepConfigPadding = '⡇ '
-  console.log(stepConfigPadding + YAML.stringify({
-    ...step,
-    name: undefined,
-    uses: undefined,
-  }).replace(/\n$/, '').split('\n').join('\n' + stepConfigPadding) + '\n');
-
+  const stepConfigPadding = '  ';
+  
+  if(step.run) {
+    console.log(leftPad(stepConfigPadding, 
+      colorizeCyan(step.run.replace(/\n$/, '')),
+    ));
+  }
+  const stepConfiguration = {...step};
+  delete stepConfiguration.name;
+  delete stepConfiguration.run;
+  delete stepConfiguration.uses;
+  
+  if(Object.keys(stepConfiguration).length) {
+    console.log(leftPad(stepConfigPadding,
+      YAML.stringify(stepConfiguration).replace(/\n$/, ''),
+    ));
+  }
+  
   if (jobResult) {
     console.log(jobResult.output.replace(/\n$/, ''));
   }
@@ -161,17 +169,16 @@ function logStep(jobId, job, jobResult) {
   core.endGroup();
 }
 
-function buildStepHeadline(job, jobResult) {
+function buildStepHeadline(jobId, job, jobResult) {
   let groupHeadline = '';
-  
   if(jobResult){
     groupHeadline += (jobResult.status === 'success' ? '⚪️' : '🔴') + ' ';
   } else {
     groupHeadline += '▶️ '; // ➤
   }
-  
+    
   const step = job.steps.at(-1);
-  groupHeadline += `Run ${buildStepDisplayName(step)}`;
+  groupHeadline += `[${jobId}] Run ${buildStepDisplayName(step)}`;
 
   if(jobResult?.executionTime) {
     groupHeadline +=` [${formatMilliseconds(jobResult.executionTime)}]`
@@ -194,6 +201,16 @@ function buildStepDisplayName(step) {
 
 function ensureNewline(text) {
   return text.endsWith('\n') ? text : text + '\n';
+}
+
+function leftPad(pad, text) {
+  return pad + text.split('\n').join('\n' + pad);
+}
+
+function colorizeCyan(value){
+  return value.split("\n")
+    .map((line) => `\x1b[1;36m${line}\x1b[0m`)
+    .join('\n');
 }
 
 function formatMilliseconds(milliseconds) {

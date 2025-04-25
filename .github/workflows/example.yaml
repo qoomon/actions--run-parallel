@@ -7,6 +7,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: pwd
+        env:
+          FOO: 42
       - uses: qoomon/actions--parallel-steps@main
         with:
           steps: |
