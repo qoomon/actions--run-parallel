@@ -69,7 +69,9 @@ async function runStepsInParallel(steps) {
   const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
     startTime: null,
     endTime: null,
-    executionTime: null,
+    get executionTime() {
+      return this.endTime - this.startTime;
+    },
     status: null,
     output: "",
   }]));
@@ -130,7 +132,6 @@ async function runStepsInParallel(steps) {
         }
       } else if (line.jobResult) {
         jobResult.endTime = new Date();
-        jobResult.executionTime = jobResult.endTime - jobResult.startTime;
         jobResult.status = line.jobResult;
         
         console.log(`[${line.jobID}] ` + buildStepHeadline(workflow.jobs[line.jobID], jobResult));
