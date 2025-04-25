@@ -67,9 +67,11 @@ async function runStepsInParallel(steps) {
   ], { env: process.env });
   
   const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
-    status: null,
-    output: null,
+    startTime: null,
+    endTime: null,
     executionTime: null,
+    status: null,
+    output: "",
   }]));
 
   console.log('');
@@ -98,17 +100,17 @@ async function runStepsInParallel(steps) {
       } catch (error) {
         return;
       }
+      
       if(!line.jobID) {
         return;
       }
   
       const jobResult = jobResults[line.jobID];
-      if(jobResult.output === null) {
-        const startLine = buildStepHeadline(workflow.jobs[line.jobID]);
-        console.log(`[${line.jobID}] ` + startLine);
-        jobResult.output = "";
+      if(!jobResult.startTime) {
+        jobResult.startTime = new Date();
+        console.log(`[${line.jobID}] ` + buildStepHeadline(workflow.jobs[line.jobID]));
       }
-  
+   
       if(line.stage === "Pre") {
         if(line.level === 'info' || line.level === 'warn' || line.level === 'error') {
           const msg = adjustMessage(line.msg);
@@ -127,8 +129,10 @@ async function runStepsInParallel(steps) {
           jobResult.output += `[${line.stage}] ${ensureNewline(msg)}`;
         }
       } else if (line.jobResult) {
+        jobResult.endTime = new Date();
+        jobResult.executionTime = jobResult.endTime - jobResult.startTime;
         jobResult.status = line.jobResult;
-        jobResult.executionTime = line.executionTime;
+        
         console.log(`[${line.jobID}] ` + buildStepHeadline(workflow.jobs[line.jobID], jobResult));
       }
     }
@@ -163,14 +167,14 @@ function buildStepHeadline(job, jobResult) {
   if(jobResult){
     groupHeadline += (jobResult.status === 'success' ? '⚪️' : '🔴') + ' ';
   } else {
-    groupHeadline += '➤ '
+    groupHeadline += '▶️ '; // ➤
   }
   
   const step = job.steps.at(-1);
   groupHeadline += `Run ${buildStepDisplayName(step)}`;
 
   if(jobResult?.executionTime) {
-    groupHeadline +=` [${formatMilliseconds(jobResult.executionTime)})]`
+    groupHeadline +=` [${formatMilliseconds(jobResult.executionTime)}]`
   }
   
   return groupHeadline;
