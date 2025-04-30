@@ -22,9 +22,8 @@ if (!Array.isArray(steps)) {
 }
 
 // Install gh-act extension
-child_process.execSync("gh extension install https://github.com/nektos/gh-act", {
-    env: {...process.env, GH_TOKEN: githubToken},
-});
+child_process.execSync("gh extension install https://github.com/nektos/gh-act",
+    {env: {...process.env, GH_TOKEN: githubToken}});
 
 await runStepsInParallel(steps).catch((error) => {
     core.setFailed("One or more parallel steps failed");
@@ -36,7 +35,7 @@ await runStepsInParallel(steps).catch((error) => {
 // ----------------------------------------------------------------
 
 async function runStepsInParallel(steps) {
-    const actionTempDir = `${process.env.RUNNER_TEMP ?? '/tmp'}/${github.context.action}`;
+    const actionTempDir = `${process.env["RUNNER_TEMP"] ?? '/tmp'}/${github.context.action}`;
     fs.mkdirSync(actionTempDir, {recursive: true});
 
     const workflowFile = `${actionTempDir}/workflow.yaml`;
@@ -77,45 +76,45 @@ async function runStepsInParallel(steps) {
         "--action-offline-mode",
         "--actor", github.context.actor,
         "-s", `GITHUB_TOKEN=${githubToken}`,
-        // "--env-file", envFilePath,
-        // "--eventpath", eventFilePath
+        "--eventpath", process.env["GITHUB_EVENT_PATH"],
         "--bind", // do not copy working directory files
         "--log-prefix-job-id",
         "--json",
-    ], {env: process.env});
+    ], {env: {...process.env, GH_TOKEN: githubToken}});
 
-    const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
-        startTime: null,
-        endTime: null,
-        get executionTime() {
-            return this.endTime && this.startTime
-                ? this.endTime - this.startTime
-                : null;
-        },
-        status: null,
+    const workflowProcessResults = {
         output: "",
-    }]));
-    jobResults.output = "";
+        jobs: Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
+            startTime: null,
+            endTime: null,
+            get executionTime() {
+                return this.endTime && this.startTime
+                    ? this.endTime - this.startTime
+                    : null;
+            },
+            status: null,
+            output: "",
+        }])),
+    }
 
-    console.log('');
-    core.startGroup("Output");
+    core.startGroup("Log");
 
     readline.createInterface({input: workflowProcess.stdout, crlfDelay: Infinity})
-        .on('line', newOutputLineHandler(workflowProcess.stdout, jobResults));
+        .on('line', newOutputLineHandler(workflowProcess.stdout, workflowProcessResults));
     readline.createInterface({input: workflowProcess.stderr, crlfDelay: Infinity})
-        .on('line', newOutputLineHandler(workflowProcess.stderr, jobResults));
+        .on('line', newOutputLineHandler(workflowProcess.stderr, workflowProcessResults));
 
     await childProcessClosed(workflowProcess).finally(() => {
         core.endGroup(); // "Output"
 
-        if (jobResults.output) {
+        if (workflowProcessResults.output) {
             console.log('');
-            console.log(removeTrailingNewline(jobResults.output));
+            console.log(removeTrailingNewline(workflowProcessResults.output));
         }
 
         for (const [jobId, job] of Object.entries(workflow.jobs)) {
             console.log('');
-            logStep(jobId, job, jobResults[jobId]);
+            logStep(jobId, job, workflowProcessResults.jobs[jobId]);
             const step = job.steps.at(-1);
             // export step command files
             GITHUB_COMMAND_FILE_ENVIRONMENT_VARIABLES.forEach((varName) => {
@@ -133,7 +132,7 @@ async function runStepsInParallel(steps) {
         }
     });
 
-    function newOutputLineHandler(outputStream, jobResults) {
+    function newOutputLineHandler(outputStream, workflowProcessResults) {
         return (line) => {
             if (!line) return;
             try {
@@ -178,7 +177,7 @@ async function runStepsInParallel(steps) {
             }
 
             if (line.jobID) {
-                const jobResult = jobResults[line.jobID];
+                const jobResult = workflowProcessResults.jobs[line.jobID];
                 // step job start
                 if (!jobResult.startTime) {
                     jobResult.startTime = new Date();
@@ -206,7 +205,7 @@ async function runStepsInParallel(steps) {
             } else if (line.level === 'error' || line.level === 'warning' || core.isDebug()) {
                 coreLog(line.level, removeTrailingNewline(line.msg));
                 const stagePrefix = line.stage ? `[${line.stage}] ` : '';
-                jobResults.output += `${coreLogPrefix(line.level)}${stagePrefix}${ensureNewline(line.msg)}`;
+                workflowProcessResults.output += `${coreLogPrefix(line.level)}${stagePrefix}${ensureNewline(line.msg)}`;
             }
         }
     }
@@ -217,7 +216,7 @@ function adjustMessage(msg) {
 }
 
 function logStep(jobId, job, jobResult) {
-    core.startGroup(' ' + buildStepHeadline(jobId, job, jobResult));
+    core.startGroup(' ' + buildStepHeadline(jobId, job, jobResult, {noJobId: true}));
 
     const step = job.steps.at(-1);
     const stepConfigPadding = '  ';
@@ -243,7 +242,7 @@ function logStep(jobId, job, jobResult) {
     core.endGroup();
 }
 
-function buildStepHeadline(jobId, job, jobResult) {
+function buildStepHeadline(jobId, job, jobResult, options = {}) {
     let groupHeadline = '';
     if (jobResult) {
         groupHeadline += (jobResult.status === 'success' ? '⚪️' : '🔴') + ' ';
@@ -252,7 +251,10 @@ function buildStepHeadline(jobId, job, jobResult) {
     }
 
     const step = job.steps.at(-1);
-    groupHeadline += `[${getJobIdDisplayName(jobId)}] Run ${buildStepDisplayName(step)}`;
+    if(!options.noJobId) {
+        groupHeadline += `[${getJobIdDisplayName(jobId)}] `;
+    }
+    groupHeadline += `Run ${buildStepDisplayName(step)}`;
 
     if (jobResult?.executionTime) {
         groupHeadline += ` [${formatMilliseconds(jobResult.executionTime)}]`

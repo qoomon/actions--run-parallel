@@ -8,9 +8,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./
         id: parallel
+        env:
+          FOO: 42
         with:
           steps: |
-            - run: echo Step0
+            - run: |
+                echo Step0
+                echo FOO=$FOO
             - run: |
                 echo Step1 && sleep 2
             - run: |
