@@ -10,7 +10,7 @@ jobs:
         with:
           steps: |
             - run: echo Step0
-            - run: |
+            - runs: |
                 echo Step1 && sleep 2
             - run: |
                 echo Step2

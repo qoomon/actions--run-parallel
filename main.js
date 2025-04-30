@@ -3,7 +3,6 @@ import github from '@actions/github';
 import YAML from 'yaml';
 import child_process from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
 import readline from 'node:readline';
 
 const WORKING_DIRECTORY = process.cwd();
@@ -14,259 +13,330 @@ const GITHUB_COMMAND_FILE_ENVIRONMENT_VARIABLES = [
     "GITHUB_STEP_SUMMARY",
 ];
 
-const githubToken = core.getInput("token", { required: true });
+const githubToken = core.getInput("token", {required: true});
 // Get steps from input
-const steps = YAML.parse(core.getInput("steps", { required: true }));
+const steps = YAML.parse(core.getInput("steps", {required: true}));
 
 if (!Array.isArray(steps)) {
-  throw new Error("steps must be an array");
+    throw new Error("steps must be an array");
 }
 
 // Install gh-act extension
 child_process.execSync("gh extension install https://github.com/nektos/gh-act", {
-  env: {...process.env, GH_TOKEN: githubToken},
+    env: {...process.env, GH_TOKEN: githubToken},
 });
 
-await runStepsInParallel(steps).catch(() => {
-  core.setFailed("One or more parallel steps failed");
+await runStepsInParallel(steps).catch((error) => {
+    core.setFailed("One or more parallel steps failed");
+    if (core.isDebug()) {
+        console.error(error.stack);
+    }
 });
 
 // ----------------------------------------------------------------
 
-// GITHUB_PATH
-// GITHUB_ENV
-// GITHUB_OUTPUT
-// GITHUB_STEP_SUMMARY
-
-
 async function runStepsInParallel(steps) {
-  const workflowFile = `${process.env.RUNNER_TEMP ?? '/tmp'}/${github.context.action}.yaml`;
-  const commandFilesDir = `${process.env.RUNNER_TEMP ?? '/tmp'}/${github.context.action}`;
-  fs.mkdirSync(commandFilesDir, { recursive: true });
-  const workflow = {
-    on: "workflow_dispatch",
-    jobs: Object.assign({}, ...steps
-      .map((step, index) => [`Step${index}`, step])
-      .map(([jobId, step]) => ({
-        [jobId]: {
-          "runs-on": "host",
-          "steps": [
-            {
-              name: "Link job working directory to host working directory",
-              run : [
-                'rm -rf "$PWD"',
-                `ln -s '${WORKING_DIRECTORY}' "$PWD"`,
-                ].join('\n'),
-            },
-            {
-              run : GITHUB_COMMAND_FILE_ENVIRONMENT_VARIABLES.map((varName) => [
-                      `rm -f "$${varName}"`,
-                      `ln -s '${commandFilesDir}/${jobId}+${varName}' "$${varName}"`,
-              ]).flat().join('\n'),
-            },
-            step,
-          ]
+    const actionTempDir = `${process.env.RUNNER_TEMP ?? '/tmp'}/${github.context.action}`;
+    fs.mkdirSync(actionTempDir, {recursive: true});
+
+    const workflowFile = `${actionTempDir}/workflow.yaml`;
+    const workflow = {
+        on: "workflow_dispatch",
+        jobs: Object.assign({}, ...steps
+            .map((step, index) => [`Step${index}`, step])
+            .map(([jobId, step]) => ({
+                [jobId]: {
+                    "runs-on": "host",
+                    "steps": [
+                        {
+                            name: "Link job working directory to host working directory",
+                            run: [
+                                'rm -rf "$PWD"',
+                                `ln -s '${WORKING_DIRECTORY}' "$PWD"`,
+                            ].join('\n'),
+                        },
+                        {
+                            name: "Link job command files to temp host files",
+                            run: GITHUB_COMMAND_FILE_ENVIRONMENT_VARIABLES.map((varName) => [
+                                `rm -f "$${varName}"`,
+                                `ln -s '${actionTempDir}/${jobId}+${varName}' "$${varName}"`,
+                            ]).flat().join('\n'),
+                        },
+                        step,
+                    ]
+                }
+            }))
+        )
+    };
+    fs.writeFileSync(workflowFile, YAML.stringify(workflow));
+
+    const workflowProcess = child_process.spawn("gh", [
+        "act",
+        "--workflows", workflowFile,
+        "--platform", "host=-self-hosted",
+        "--action-offline-mode",
+        "--actor", github.context.actor,
+        "-s", `GITHUB_TOKEN=${githubToken}`,
+        // "--env-file", envFilePath,
+        // "--eventpath", eventFilePath
+        "--bind", // do not copy working directory files
+        "--log-prefix-job-id",
+        "--json",
+    ], {env: process.env});
+
+    const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
+        startTime: null,
+        endTime: null,
+        get executionTime() {
+            return this.endTime - this.startTime;
+        },
+        status: null,
+        output: "",
+    }]));
+    jobResults.output = "";
+
+    console.log('');
+    core.startGroup("Output");
+
+    readline.createInterface({input: workflowProcess.stdout, crlfDelay: Infinity})
+        .on('line', newOutputLineHandler(workflowProcess.stdout, jobResults));
+    readline.createInterface({input: workflowProcess.stderr, crlfDelay: Infinity})
+        .on('line', newOutputLineHandler(workflowProcess.stderr, jobResults));
+
+    await childProcessClosed(workflowProcess).finally(() => {
+        core.endGroup(); // "Output"
+
+        if (jobResults.output) {
+            console.log('');
+            console.log(removeTrailingNewline(jobResults.output));
         }
-      }))
-    )
-  };
-  fs.mkdirSync(path.dirname(workflowFile), { recursive: true });
-  fs.writeFileSync(workflowFile, YAML.stringify(workflow));
 
-  const workflowProcess = child_process.spawn("gh", [
-    "act",
-    "--workflows", workflowFile,
-    "--platform", "host=-self-hosted",
-    "--action-offline-mode",
-    "--actor", github.context.actor,
-    "-s", `GITHUB_TOKEN=${githubToken}`,
-    // "--env-file", envFilePath,
-    // "--eventpath", eventFilePath
-    "--bind", // do not copy working directory files
-    "--log-prefix-job-id",
-    "--json",
-  ], { env: process.env });
+        for (const [jobId, job] of Object.entries(workflow.jobs)) {
+            console.log('');
+            logStep(jobId, job, jobResults[jobId]);
+            // export step command files
+            GITHUB_COMMAND_FILE_ENVIRONMENT_VARIABLES.forEach((varName) => {
+                if (fs.existsSync(`${actionTempDir}/${jobId}+${varName}`)) {
+                    const commandFileContent = fs.readFileSync(`${actionTempDir}/${jobId}+${varName}`, 'utf8');
+                    const commandFileName = process.env[varName];
+                    fs.appendFileSync(commandFileName, commandFileContent);
+                }
+            })
+        }
+    });
 
-  const jobResults = Object.fromEntries(Object.keys(workflow.jobs).map(jobId => [jobId, {
-    startTime: null,
-    endTime: null,
-    get executionTime() {
-      return this.endTime - this.startTime;
-    },
-    status: null,
-    output: "",
-  }]));
+    function newOutputLineHandler(outputStream, jobResults) {
+        return (line) => {
+            if (!line) return;
+            try {
+                line = JSON.parse(line);
+            } catch (error) {
+                const lineMatch = line.match(/^level=(?<level>\w+)\smsg=(?<msg>.*)/);
+                if (lineMatch) {
+                    let level = lineMatch.groups.level;
+                    line = {level, msg: lineMatch.groups.msg}
+                } else {
+                    const lineMatch = line.match(/^Error: (?<msg>.*)/);
+                    if (lineMatch) {
+                        const msgMatch = lineMatch.groups.msg.match(/(?<msg>.*)for job:(?<jobID>\w+) step:(?<step>\d+)$/);
+                        if (msgMatch) {
+                            line = {
+                                level: 'error',
+                                msg: msgMatch.groups.msg,
+                                jobID: msgMatch.groups.jobID,
+                                step: [msgMatch.groups.step],
+                            };
+                        } else {
+                            line = {
+                                level: 'error',
+                                msg: lineMatch.groups.msg,
+                            };
+                        }
+                    } else {
+                        line = {
+                            level: 'error',
+                            msg: line,
+                        };
+                    }
+                }
+            }
+            // normalize level to github core log levels
+            if (line.level === 'warn') line.level = 'warning';
 
-  console.log('');
-  core.startGroup("Output");
+            if (line.msg.endsWith("not located inside a git repository")
+                || line.msg.endsWith("unable to get git ref: repository does not exist")
+                || line.msg.endsWith("unable to get git revision: repository does not exist")) {
+                return;
+            }
 
-  readline.createInterface({input: workflowProcess.stdout, crlfDelay: Infinity})
-    .on('line', newOutputLineHandler(workflowProcess.stdout, jobResults));
-  readline.createInterface({input: workflowProcess.stderr, crlfDelay: Infinity})
-    .on('line', newOutputLineHandler(workflowProcess.stderr, jobResults));
+            if (line.jobID) {
+                const jobResult = jobResults[line.jobID];
+                // step job start
+                if (!jobResult.startTime) {
+                    jobResult.startTime = new Date();
+                    core.info(buildStepHeadline(line.jobID, workflow.jobs[line.jobID]));
+                }
 
-  workflowProcess.on("exit", () => {
-    core.endGroup(); // "Output"
-
-    for (const [jobId, job] of Object.entries(workflow.jobs)) {
-      console.log('');
-      logStep(jobId, job, jobResults[jobId]);
-      // export step command files
-      GITHUB_COMMAND_FILE_ENVIRONMENT_VARIABLES.forEach((varName) => {
-          const commandFileContent = fs.readFileSync(`${commandFilesDir}/${jobId}+${varName}`, 'utf8');
-          const commandFileName = process.env[varName];
-          fs.appendFileSync(commandFileName, commandFileContent);
-      })
+                // step job end
+                if (line.jobResult) {
+                    jobResult.endTime = new Date();
+                    jobResult.status = line.jobResult;
+                    core.info(buildStepHeadline(line.jobID, workflow.jobs[line.jobID], jobResult));
+                } else if (line.raw_output) {
+                    coreLog(line.level, `[${line.jobID}] ${removeTrailingNewline(line.msg)}`);
+                    jobResult.output += `${coreLogPrefix(line.level)}${ensureNewline(line.msg)}`;
+                } else if (line.stage === "Pre" || line.stage === "Post") {
+                    if (!line.stepResult) {
+                        const msg = adjustMessage(line.msg);
+                        coreLog(line.level, `[${line.jobID}] [${line.stage}] ${removeTrailingNewline(msg)}`);
+                        jobResult.output += `${coreLogPrefix(line.level)}[${line.stage}] ${ensureNewline(msg)}`;
+                    }
+                } else if (line.level === 'error' || line.level === 'warning' || core.isDebug()) {
+                    coreLog(line.level, `[${line.jobID}] ${removeTrailingNewline(line.msg)}`);
+                    jobResult.output += `${coreLogPrefix(line.level)}${ensureNewline(line.msg)}`;
+                }
+            } else if (line.level === 'error' || line.level === 'warning' || core.isDebug()) {
+                coreLog(line.level, removeTrailingNewline(line.msg));
+                const stagePrefix = line.stage ? `[${line.stage}] ` : '';
+                jobResults.output += `${coreLogPrefix(line.level)}${stagePrefix}${ensureNewline(line.msg)}`;
+            }
+        }
     }
-  });
-
-  await childProcessClosed(workflowProcess);
-
-  function newOutputLineHandler(outputStream, jobResults) {
-    return (line) => {
-      try {
-        line = JSON.parse(line);
-      } catch (error) {
-        return;
-      }
-
-      if(!line.jobID) {
-        return;
-      }
-
-      const jobResult = jobResults[line.jobID];
-      if(!jobResult.startTime) {
-        jobResult.startTime = new Date();
-        console.log(buildStepHeadline(line.jobID, workflow.jobs[line.jobID]));
-      }
-
-      if(line.stage === "Pre" || line.stage === "Post") {
-        if(line.level === 'info' || line.level === 'warn' || line.level === 'error') {
-          const msg = adjustMessage(line.msg);
-          console.log(`[${line.jobID}] [${line.stage}] ${msg}`);
-          jobResult.output += `[${line.stage}] ${ensureNewline(msg)}`;
-        }
-      } else if(line.stage === "Main") {
-        if(line.raw_output) {
-          process.stdout.write(`[${line.jobID}] ${ensureNewline(line.msg)}`);
-          jobResult.output += `${line.msg}`;
-        }
-      } else if (line.jobResult) {
-        jobResult.endTime = new Date();
-        jobResult.status = line.jobResult;
-        console.log(buildStepHeadline(line.jobID, workflow.jobs[line.jobID], jobResult));
-      }
-    }
-  }
 }
 
 function adjustMessage(msg) {
-  return msg.replace(/^ {2}☁\s+/, '');
+    return msg.replace(/^ {2}☁\s+/, '');
 }
 
 function logStep(jobId, job, jobResult) {
-  core.startGroup(' ' + buildStepHeadline(jobId, job, jobResult));
+    core.startGroup(' ' + buildStepHeadline(jobId, job, jobResult));
 
-  const step = job.steps.at(-1);
-  const stepConfigPadding = '  ';
+    const step = job.steps.at(-1);
+    const stepConfigPadding = '  ';
 
-  if(step.run) {
-    console.log(leftPad(stepConfigPadding,
-      colorizeCyan(step.run.replace(/\n$/, '')),
-    ));
-  }
-  const stepConfiguration = {...step};
-  delete stepConfiguration.name;
-  delete stepConfiguration.run;
-  delete stepConfiguration.uses;
+    if (step.run) {
+        console.log(leftPad(stepConfigPadding,
+            colorizeCyan(step.run.replace(/\n$/, '')),
+        ));
+    }
+    const stepConfiguration = {...step};
+    delete stepConfiguration.name;
+    delete stepConfiguration.run;
+    delete stepConfiguration.uses;
 
-  if(Object.keys(stepConfiguration).length) {
-    console.log(leftPad(stepConfigPadding,
-      YAML.stringify(stepConfiguration).replace(/\n$/, ''),
-    ));
-  }
+    if (Object.keys(stepConfiguration).length) {
+        console.log(leftPad(stepConfigPadding, removeTrailingNewline(YAML.stringify(stepConfiguration))));
+    }
 
-  if (jobResult) {
-    console.log(jobResult.output.replace(/\n$/, ''));
-  }
+    if (jobResult) {
+        console.log(removeTrailingNewline(jobResult.output));
+    }
 
-  core.endGroup();
+    core.endGroup();
 }
 
 function buildStepHeadline(jobId, job, jobResult) {
-  let groupHeadline = '';
-  if(jobResult){
-    groupHeadline += (jobResult.status === 'success' ? '⚪️' : '🔴') + ' ';
-  } else {
-    groupHeadline += '▶️ '; // ➤
-  }
+    let groupHeadline = '';
+    if (jobResult) {
+        groupHeadline += (jobResult.status === 'success' ? '⚪️' : '🔴') + ' ';
+    } else {
+        groupHeadline += '▶️ '; // ➤
+    }
 
-  const step = job.steps.at(-1);
-  groupHeadline += `[${jobId}] Run ${buildStepDisplayName(step)}`;
+    const step = job.steps.at(-1);
+    groupHeadline += `[${jobId}] Run ${buildStepDisplayName(step)}`;
 
-  if(jobResult?.executionTime) {
-    groupHeadline +=` [${formatMilliseconds(jobResult.executionTime)}]`
-  }
+    if (jobResult?.executionTime) {
+        groupHeadline += ` [${formatMilliseconds(jobResult.executionTime)}]`
+    }
 
-  return groupHeadline;
+    return groupHeadline;
 }
 
 function buildStepDisplayName(step) {
-  let displayName = step.name
-  if(!displayName){
-    if(step.uses) {
-      displayName = step.uses;
-    } else {
-      displayName = step.run.split('\n')[0].slice(0, 80);
+    let displayName = step.name
+    if (!displayName) {
+        if (step.uses) {
+            displayName = step.uses;
+        } else if (step.run) {
+            displayName = step.run.split('\n')[0].slice(0, 80);
+        }
     }
-  }
-  return displayName;
+    return displayName;
 }
 
 function ensureNewline(text) {
-  return text.endsWith('\n') ? text : text + '\n';
+    return text.endsWith('\n') ? text : text + '\n';
+}
+
+function removeTrailingNewline(text) {
+    return text.replace(/\n$/, '');
 }
 
 function leftPad(pad, text) {
-  return pad + text.split('\n').join('\n' + pad);
+    return pad + text.split('\n').join('\n' + pad);
 }
 
-function colorizeCyan(value){
-  return value.split("\n")
-    .map((line) => `\x1b[1;36m${line}\x1b[0m`)
-    .join('\n');
+function colorizeCyan(value) {
+    return value.split("\n")
+        .map((line) => `\x1b[1;36m${line}\x1b[0m`)
+        .join('\n');
 }
 
 function formatMilliseconds(milliseconds) {
-  const totalSeconds = Math.floor(milliseconds / 1000);
-  const seconds = totalSeconds % 60;
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const minutes = totalMinutes % 60;
-  const hours = Math.floor(totalMinutes / 60);
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const seconds = totalSeconds % 60;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const minutes = totalMinutes % 60;
+    const hours = Math.floor(totalMinutes / 60);
 
-  const parts = [];
-  if (hours > 0) {
-    parts.push(`${hours}h`);
-  }
-  if (minutes > 0) {
-    parts.push(`${minutes}m`);
-  }
-  if (seconds > 0) {
-    parts.push(`${seconds}s`);
-  }
-  if (parts.length) {
-    return parts.join(" ");
-  }
+    const parts = [];
+    if (hours > 0) {
+        parts.push(`${hours}h`);
+    }
+    if (minutes > 0) {
+        parts.push(`${minutes}m`);
+    }
+    if (seconds > 0) {
+        parts.push(`${seconds}s`);
+    }
+    if (parts.length) {
+        return parts.join(" ");
+    }
 
-  return `${milliseconds}ms`;
+    return `${milliseconds}ms`;
 }
 
-async function childProcessClosed(childProcess){
-  return new Promise((resolve, reject) => {
-    // close vs exit => https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
-    childProcess.on("close", (exitCode) => {
-      if (exitCode !== 0) reject()
-      else resolve();
-    });
-  })
+async function childProcessClosed(childProcess) {
+    return new Promise((resolve, reject) => {
+        // close vs exit => https://stackoverflow.com/questions/37522010/difference-between-childprocess-close-exit-events
+        childProcess.on("close", (exitCode) => {
+            if (exitCode !== 0) reject(new Error("Process exited with non-zero code: " + exitCode));
+            else resolve();
+        });
+    })
+}
+
+function coreLog(level, message) {
+    if (level === 'error') {
+        core.error(message);
+    } else if (level === 'warning') {
+        core.warning(message);
+    } else if (level === 'debug') {
+        core.debug(message);
+    } else {
+        core.info(message)
+    }
+}
+
+function coreLogPrefix(level) {
+    if (level === 'error') {
+        return "::error::";
+    } else if (level === 'warning') {
+        return "::warning::";
+    } else if (level === 'debug') {
+        return "::debug::";
+    } else {
+        return "";
+    }
 }
