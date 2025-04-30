@@ -16,13 +16,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: qoomon/actions--parallel-steps@v1
+        id: parallel-steps
         with:
           steps: |
             - run: echo Step0
             - run: echo Step1
             - uses: actions/github-script@v7
+              id: greetings
               with:
-                script: console.log('Step2')
+                script: |
+                  const recipient = 'world'
+                  console.log(`Hello ${recipient}!`)
+                  core.setOutput('recipient', recipient)
+            
+      # access parallel steps outputs            
+      - run: echo Hello $RECIPIENT
+        env:
+          RECIPIENT: ${{ steps.parallel-steps.outputs.greetings-recipient }}
 ```
 
 ## Workflow Run Examples

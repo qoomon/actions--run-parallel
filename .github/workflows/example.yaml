@@ -27,6 +27,7 @@ jobs:
             - run: echo Step6
             - run: echo Step7
             - uses: actions/github-script@v7
+              id: step8
               with:
                 script: |
                   console.log('Step8')
@@ -37,5 +38,5 @@ jobs:
           echo VALUE_8 $VALUE_8
           echo OUTPUT_VALUE_8 OUTPUT_VALUE_8
         env:
-          OUTPUT_VALUE_8: ${{ steps.parallel.outputs.value8 }}
+          OUTPUT_VALUE_8: ${{ steps.parallel.outputs.step8-value8 }}
 

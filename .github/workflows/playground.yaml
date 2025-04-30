@@ -7,20 +7,30 @@ jobs:
       - run: pwd
       - uses: actions/checkout@v4
       - uses: ./
+        id: parallel
         with:
           steps: |
             - run: echo Step0
-            - runs: |
+            - run: |
                 echo Step1 && sleep 2
             - run: |
                 echo Step2
                 echo Step2 > step2.txt
                 echo FOO=step2 >> $GITHUB_ENV
             - uses: actions/github-script@v7
+              id: step4
               with:
                 script: |
                   console.log('Step4')
-                  core.setOutput('step4', 'Step4')
+                  core.setOutput('result-1', 'FromStep4')
+            - uses: actions/github-script@v7
+              id: step5
+              with:
+                script: |
+                  console.log('Step5')
+                  core.setOutput('result1', 'FromStep5')
       - run: |
           cat step2.txt
-          echo FOO=$FOO
+          echo RESULT=$RESULT
+        env:
+            RESULT: ${{ steps.parallel.outputs.step4-result-1 }}

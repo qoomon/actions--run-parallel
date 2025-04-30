@@ -43,7 +43,7 @@ async function runStepsInParallel(steps) {
     const workflow = {
         on: "workflow_dispatch",
         jobs: Object.assign({}, ...steps
-            .map((step, index) => [`Step${index}`, step])
+            .map((step, index) => [`Step_${index}`, step])
             .map(([jobId, step]) => ({
                 [jobId]: {
                     "runs-on": "host",
@@ -88,7 +88,9 @@ async function runStepsInParallel(steps) {
         startTime: null,
         endTime: null,
         get executionTime() {
-            return this.endTime - this.startTime;
+            return this.endTime && this.startTime
+                ? this.endTime - this.startTime
+                : null;
         },
         status: null,
         output: "",
@@ -114,10 +116,16 @@ async function runStepsInParallel(steps) {
         for (const [jobId, job] of Object.entries(workflow.jobs)) {
             console.log('');
             logStep(jobId, job, jobResults[jobId]);
+            const step = job.steps.at(-1);
             // export step command files
             GITHUB_COMMAND_FILE_ENVIRONMENT_VARIABLES.forEach((varName) => {
                 if (fs.existsSync(`${actionTempDir}/${jobId}+${varName}`)) {
-                    const commandFileContent = fs.readFileSync(`${actionTempDir}/${jobId}+${varName}`, 'utf8');
+                    let commandFileContent = fs.readFileSync(`${actionTempDir}/${jobId}+${varName}`, 'utf8');
+                    if (varName === 'GITHUB_OUTPUT' && step.id) {
+                        // prefix outputs with the step id
+                        commandFileContent = commandFileContent
+                            .replaceAll(/^(?<name>[\w-]+)(?=<<ghadelimiter_)/gm, `${step.id}-$1`);
+                    }
                     const commandFileName = process.env[varName];
                     fs.appendFileSync(commandFileName, commandFileContent);
                 }
@@ -131,7 +139,7 @@ async function runStepsInParallel(steps) {
             try {
                 line = JSON.parse(line);
             } catch (error) {
-                const lineMatch = line.match(/^level=(?<level>\w+)\smsg=(?<msg>.*)/);
+                const lineMatch = line.match(/^level=(?<level>[\w-]+)\smsg=(?<msg>.*)/);
                 if (lineMatch) {
                     let level = lineMatch.groups.level;
                     line = {level, msg: lineMatch.groups.msg}
@@ -183,16 +191,16 @@ async function runStepsInParallel(steps) {
                     jobResult.status = line.jobResult;
                     core.info(buildStepHeadline(line.jobID, workflow.jobs[line.jobID], jobResult));
                 } else if (line.raw_output) {
-                    coreLog(line.level, `[${line.jobID}] ${removeTrailingNewline(line.msg)}`);
+                    coreLog(line.level, `[${getJobIdDisplayName(line.jobID)}] ${removeTrailingNewline(line.msg)}`);
                     jobResult.output += `${coreLogPrefix(line.level)}${ensureNewline(line.msg)}`;
                 } else if (line.stage === "Pre" || line.stage === "Post") {
                     if (!line.stepResult) {
                         const msg = adjustMessage(line.msg);
-                        coreLog(line.level, `[${line.jobID}] [${line.stage}] ${removeTrailingNewline(msg)}`);
+                        coreLog(line.level, `[${getJobIdDisplayName(line.jobID)}] [${line.stage}] ${removeTrailingNewline(msg)}`);
                         jobResult.output += `${coreLogPrefix(line.level)}[${line.stage}] ${ensureNewline(msg)}`;
                     }
                 } else if (line.level === 'error' || line.level === 'warning' || core.isDebug()) {
-                    coreLog(line.level, `[${line.jobID}] ${removeTrailingNewline(line.msg)}`);
+                    coreLog(line.level, `[${getJobIdDisplayName(line.jobID)}] ${removeTrailingNewline(line.msg)}`);
                     jobResult.output += `${coreLogPrefix(line.level)}${ensureNewline(line.msg)}`;
                 }
             } else if (line.level === 'error' || line.level === 'warning' || core.isDebug()) {
@@ -244,7 +252,7 @@ function buildStepHeadline(jobId, job, jobResult) {
     }
 
     const step = job.steps.at(-1);
-    groupHeadline += `[${jobId}] Run ${buildStepDisplayName(step)}`;
+    groupHeadline += `[${getJobIdDisplayName(jobId)}] Run ${buildStepDisplayName(step)}`;
 
     if (jobResult?.executionTime) {
         groupHeadline += ` [${formatMilliseconds(jobResult.executionTime)}]`
@@ -260,9 +268,15 @@ function buildStepDisplayName(step) {
             displayName = step.uses;
         } else if (step.run) {
             displayName = step.run.split('\n')[0].slice(0, 80);
+        } else {
+            displayName = '';
         }
     }
     return displayName;
+}
+
+function getJobIdDisplayName(jobId) {
+    return jobId.replace(/^Step_/, 'Step ');
 }
 
 function ensureNewline(text) {
