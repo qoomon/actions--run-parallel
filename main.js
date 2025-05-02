@@ -1,4 +1,4 @@
-import core from '@actions/core';
+import core, {ExitCode} from '@actions/core';
 import github from '@actions/github';
 import YAML from 'yaml';
 import child_process from 'node:child_process';
@@ -22,14 +22,17 @@ if (!Array.isArray(steps)) {
 }
 
 // Install gh-act extension
-child_process.execSync("gh extension install https://github.com/nektos/gh-act",
-    {env: {...process.env, GH_TOKEN: githubToken}});
+child_process.execSync("gh extension install https://github.com/nektos/gh-act", {
+    stdio: 'inherit',
+    env: {...process.env, GH_TOKEN: githubToken}
+});
 
 await runStepsInParallel(steps).catch((error) => {
-    core.setFailed("One or more parallel steps failed");
+    console.log('')
     if (core.isDebug()) {
         console.error(error.stack);
     }
+    process.exitCode = ExitCode.Failure;
 });
 
 // ----------------------------------------------------------------
@@ -38,7 +41,7 @@ async function runStepsInParallel(steps) {
     const actionTempDir = `${process.env["RUNNER_TEMP"] ?? '/tmp'}/${github.context.action}`;
     fs.mkdirSync(actionTempDir, {recursive: true});
 
-    const workflowFile = `${actionTempDir}/workflow.yaml`;
+    const workflowFile = `${actionTempDir}/parallel-steps.yaml`;
     const workflow = {
         on: "workflow_dispatch",
         jobs: Object.assign({}, ...steps
@@ -97,7 +100,7 @@ async function runStepsInParallel(steps) {
         }])),
     }
 
-    core.startGroup("Log");
+    core.startGroup("Concurrent Logs");
 
     readline.createInterface({input: workflowProcess.stdout, crlfDelay: Infinity})
         .on('line', newOutputLineHandler(workflowProcess.stdout, workflowProcessResults));
@@ -183,29 +186,54 @@ async function runStepsInParallel(steps) {
                     jobResult.startTime = new Date();
                     core.info(buildStepHeadline(line.jobID, workflow.jobs[line.jobID]));
                 }
-
                 // step job end
                 if (line.jobResult) {
                     jobResult.endTime = new Date();
                     jobResult.status = line.jobResult;
                     core.info(buildStepHeadline(line.jobID, workflow.jobs[line.jobID], jobResult));
-                } else if (line.raw_output) {
-                    coreLog(line.level, `[${getJobIdDisplayName(line.jobID)}] ${removeTrailingNewline(line.msg)}`);
-                    jobResult.output += `${coreLogPrefix(line.level)}${ensureNewline(line.msg)}`;
+                } else if (line.stage === "Main" && line.raw_output) {
+                    jobResult.output += ensureNewline(line.msg);
+
+                    const logPrefix = colorizeGray(`   [${getJobIdDisplayName(line.jobID)}] `);
+                    console.log(logPrefix + removeTrailingNewline(line.msg));
                 } else if (line.stage === "Pre" || line.stage === "Post") {
                     if (!line.stepResult) {
                         const msg = adjustMessage(line.msg);
-                        coreLog(line.level, `[${getJobIdDisplayName(line.jobID)}] [${line.stage}] ${removeTrailingNewline(msg)}`);
-                        jobResult.output += `${coreLogPrefix(line.level)}[${line.stage}] ${ensureNewline(msg)}`;
+
+                        let outputPrefix = colorizeGray(`  [${line.stage}] `);
+                        if (line.level !== 'info') {
+                            outputPrefix += `${formatLogLevel(line.level)}: `;
+                        }
+                        jobResult.output += `${formatLogLevel(line.level)}: ` + outputPrefix + ensureNewline(msg);
+
+                        let logPrefix = colorizeGray(`   [${getJobIdDisplayName(line.jobID)}] `) + outputPrefix;
+                        console.log(logPrefix + removeTrailingNewline(msg));
                     }
                 } else if (line.level === 'error' || line.level === 'warning' || core.isDebug()) {
-                    coreLog(line.level, `[${getJobIdDisplayName(line.jobID)}] ${removeTrailingNewline(line.msg)}`);
-                    jobResult.output += `${coreLogPrefix(line.level)}${ensureNewline(line.msg)}`;
+                    const ignoreLine = line.msg.match(/^exit status /);
+                    if (!ignoreLine) {
+                        let outputPrefix = ''
+                        if (line.level !== 'info') {
+                            outputPrefix += `${formatLogLevel(line.level)}: `;
+                        }
+                        jobResult.output += outputPrefix + ensureNewline(line.msg);
+
+                        const logPrefix = colorizeGray(`   [${getJobIdDisplayName(line.jobID)}] `) + outputPrefix;
+                        console.log(logPrefix + removeTrailingNewline(line.msg));
+                    }
                 }
             } else if (line.level === 'error' || line.level === 'warning' || core.isDebug()) {
-                coreLog(line.level, removeTrailingNewline(line.msg));
-                const stagePrefix = line.stage ? `[${line.stage}] ` : '';
-                workflowProcessResults.output += `${coreLogPrefix(line.level)}${stagePrefix}${ensureNewline(line.msg)}`;
+                const ignoreLine = line.msg.match(/^Job 'Step_\d+' failed$/)
+                if (!ignoreLine) {
+                    let outputPrefix = line.stage ? colorizeGray(`[${line.stage}] `) : '';
+                    if (line.level !== 'info') {
+                        outputPrefix += `${formatLogLevel(line.level)}: `;
+                    }
+                    workflowProcessResults.output += outputPrefix + ensureNewline(line.msg);
+
+                    const logPrefix = outputPrefix;
+                    console.log(logPrefix + removeTrailingNewline(line.msg));
+                }
             }
         }
     }
@@ -245,35 +273,37 @@ function logStep(jobId, job, jobResult) {
 function buildStepHeadline(jobId, job, jobResult, options = {}) {
     let groupHeadline = '';
     if (jobResult) {
-        groupHeadline += (jobResult.status === 'success' ? '⚪️' : '🔴') + ' ';
+        groupHeadline += jobResult.status === 'success'
+            ? colorizeGray('⬤ ')
+            : colorizeRed('⬤ ');
     } else {
-        groupHeadline += '▶️ '; // ➤
+        groupHeadline += colorizeGray('❯  ');
     }
 
     const step = job.steps.at(-1);
-    if(!options.noJobId) {
-        groupHeadline += `[${getJobIdDisplayName(jobId)}] `;
+    if (!options.noJobId) {
+        groupHeadline += colorizeGray(`[${getJobIdDisplayName(jobId)}] `);
     }
     groupHeadline += `Run ${buildStepDisplayName(step)}`;
 
     if (jobResult?.executionTime) {
-        groupHeadline += ` [${formatMilliseconds(jobResult.executionTime)}]`
+        groupHeadline += colorizeGray(` [${formatMilliseconds(jobResult.executionTime)}]`);
     }
 
     return groupHeadline;
 }
 
 function buildStepDisplayName(step) {
-    let displayName = step.name
-    if (!displayName) {
-        if (step.uses) {
-            displayName = step.uses;
-        } else if (step.run) {
-            displayName = step.run.split('\n')[0].slice(0, 80);
-        } else {
-            displayName = '';
-        }
+    let displayName = 'INVALID STEP';
+
+    if(step.name) {
+        displayName = step.name;
+    } else if(step.uses) {
+        displayName = step.uses;
+    } else if(step.run) {
+        displayName = step.run.split('\n')[0];
     }
+
     return displayName;
 }
 
@@ -296,6 +326,24 @@ function leftPad(pad, text) {
 function colorizeCyan(value) {
     return value.split("\n")
         .map((line) => `\x1b[1;36m${line}\x1b[0m`)
+        .join('\n');
+}
+
+function colorizeGray(value) {
+    return value.split("\n")
+        .map((line) => `\x1b[1;90m${line}\x1b[0m`)
+        .join('\n');
+}
+
+function colorizeRed(value) {
+    return value.split("\n")
+        .map((line) => `\x1b[1;31m${line}\x1b[0m`)
+        .join('\n');
+}
+
+function colorizeYellow(value) {
+    return value.split("\n")
+        .map((line) => `\x1b[1;33m${line}\x1b[0m`)
         .join('\n');
 }
 
@@ -333,26 +381,12 @@ async function childProcessClosed(childProcess) {
     })
 }
 
-function coreLog(level, message) {
-    if (level === 'error') {
-        core.error(message);
-    } else if (level === 'warning') {
-        core.warning(message);
-    } else if (level === 'debug') {
-        core.debug(message);
-    } else {
-        core.info(message)
+function formatLogLevel(level) {
+    let formattedLevel = String(level).charAt(0).toUpperCase() + String(level).slice(1);
+    if (formattedLevel === 'Warning') {
+        formattedLevel = colorizeYellow(formattedLevel);
+    } else if (formattedLevel === 'Error') {
+        formattedLevel = colorizeRed(formattedLevel);
     }
-}
-
-function coreLogPrefix(level) {
-    if (level === 'error') {
-        return "::error::";
-    } else if (level === 'warning') {
-        return "::warning::";
-    } else if (level === 'debug') {
-        return "::debug::";
-    } else {
-        return "";
-    }
+    return formattedLevel;
 }

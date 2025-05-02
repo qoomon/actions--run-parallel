@@ -16,7 +16,7 @@ jobs:
                 echo Step0
                 echo FOO=$FOO
             - run: |
-                echo Step1 && sleep 2
+                echo Step1 && exit 1
             - run: |
                 echo Step2
                 echo Step2 > step2.txt
