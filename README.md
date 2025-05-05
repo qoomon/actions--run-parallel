@@ -1,4 +1,4 @@
-# Parallel Steps
+# Parallel Steps &nbsp; [![Actions](https://img.shields.io/badge/qoomon-GitHub%20Actions-blue)](https://github.com/qoomon/actions)
 
 With this action, you can run parallel steps in a GitHub Actions workflow jobs.
 
