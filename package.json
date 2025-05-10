@@ -19,6 +19,7 @@
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/github": "^6.0.0",
+    "@logdna/tail-file": "^4.0.2",
     "yaml": "^2.7.1"
   }
 }

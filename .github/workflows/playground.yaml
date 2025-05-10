@@ -5,36 +5,28 @@ jobs:
     runs-on: host
     steps:
       - run: pwd
-      - uses: actions/checkout@v4
-      - uses: ./
+      - uses: qoomon/actions--parallel-steps@local
         id: parallel
-        env:
-          FOO: 42
         with:
           steps: |
             - run: |
                 echo Step0
-                echo FOO=$FOO
             - run: |
-                echo Step1 && exit 1
+                echo Step1
             - run: |
                 echo Step2
-                echo Step2 > step2.txt
-                echo FOO=step2 >> $GITHUB_ENV
-            - uses: actions/github-script@v7
-              id: step4
-              with:
-                script: |
-                  console.log('Step4')
-                  core.setOutput('result-1', 'FromStep4')
-            - uses: actions/github-script@v7
-              id: step5
-              with:
-                script: |
-                  console.log('Step5')
-                  core.setOutput('result1', 'FromStep5')
+
+      #                echo Step0 > step0.txt
+      #                echo FOO=step0 >> $GITHUB_ENV
+#            - uses: actions/github-script@v7
+#              id: step4
+#              with:
+#                script: |
+#                  console.log('Step4')
+#                  core.setOutput('result-1', 'FromStep4')
+
       - run: |
-          cat step2.txt
+          cat step2.txt || true
           echo RESULT=$RESULT
         env:
             RESULT: ${{ steps.parallel.outputs.step4-result-1 }}
