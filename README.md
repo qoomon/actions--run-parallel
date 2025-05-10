@@ -38,3 +38,8 @@ jobs:
 ## Workflow Run Examples
 https://github.com/qoomon/actions--parallel-steps/actions/workflows/example.yaml
 
+## Development
+- run locally
+  ```bash
+  RUNNER_DEBUG=1 gh act --workflows .github/workflows/example.yaml --platform ubuntu-latest=-self-hosted -s GITHUB_TOKEN="$(gh auth token)" --local-repository qoomon/actions--parallel-steps@main=$PWD
+  ```

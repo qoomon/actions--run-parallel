@@ -1,0 +1,5 @@
+runs:
+  using: node20
+  main: main.js
+  pre: pre.js
+  post: post.js

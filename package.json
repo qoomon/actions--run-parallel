@@ -1,24 +1,12 @@
 {
-  "name": "actions--run-parallel",
-  "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
   "scripts": {
     "test": "echo \"No test specified\""
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/qoomon/actions--run-parallel.git"
-  },
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/qoomon/actions--run-parallel/issues"
-  },
-  "homepage": "https://github.com/qoomon/actions--run-parallel#readme",
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/github": "^6.0.0",
+    "@logdna/tail-file": "^4.0.2",
     "yaml": "^2.7.1"
   }
 }
