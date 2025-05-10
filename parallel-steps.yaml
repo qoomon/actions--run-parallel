@@ -1,0 +1,17 @@
+on: workflow_dispatch
+jobs:
+  step0:
+    runs-on: host
+    steps:
+      - uses: __/act-interceptor@local
+        with:
+          host-working-directory: /Users/bengtbrodersen/Workspace-qoomon/actions--parallel-steps
+          command-files: ""
+      - run: |
+          echo Step0
+          echo fromStep0 > step0.txt
+          # ls -lachs $GITHUB_ENV
+          echo STEP0=fromStep0 >> $GITHUB_ENV
+      - uses: __/act-interceptor@local
+        with:
+          stage: main-end

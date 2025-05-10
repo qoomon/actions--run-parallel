@@ -40,33 +40,3 @@ readline.createInterface({
         console.log(line.msg);
     }
 });
-
-
-
-
-
-
-
-
-
-// if (workflowProcessResults.output) {
-//     console.log('');
-//     console.log(removeTrailingNewline(workflowProcessResults.output));
-// }
-//
-// for (const [jobId, job] of Object.entries(workflow.jobs)) {
-//     console.log('');
-//     logStep(jobId, job, workflowProcessResults.jobs[jobId]);
-//
-//     const step = getJobStepId(job);
-//
-//     for (const [varName, commandFile] of GITHUB_COMMAND_FILE_ENVIRONMENT_VARIABLES) {
-//         let commandFileContent = workflowProcessResults.jobs[jobId].commandFiles[varName];
-//         if (varName === 'GITHUB_OUTPUT' && step.id) {
-//             // prefix outputs with the step id
-//             commandFileContent = commandFileContent
-//                 .replaceAll(/^(?<name>[\w-]+)(?=<<ghadelimiter_)/gm, `${step.id}-$1`);
-//         }
-//         await fs.appendFile(commandFile, commandFileContent);
-//     }
-// }

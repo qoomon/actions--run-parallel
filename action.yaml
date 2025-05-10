@@ -15,9 +15,11 @@ inputs:
     required: true
 
 outputs:
-  steps:
-    description: Step output
+  # <step id>-<output name>:
+  #   description: See the documentation for the step
 
 runs:
   using: node20
   main: main.js
+  pre: pre.js
+  post: post.js

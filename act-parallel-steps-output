@@ -1,0 +1,26 @@
+{"jobID":"step0","msg":"\u001b[1;90m❯  \u001b[0m\u001b[1;90m[Step 0] \u001b[0mRun echo Step0"}
+{"jobID":"step0","msg":"\u001b[1;90m❯  \u001b[0m\u001b[1;90m[Step 0] \u001b[0mRun echo Step0"}
+{"jobID":"step0","msg":"\u001b[1;90m❯  \u001b[0m\u001b[1;90m[Step 0] \u001b[0mRun echo Step0"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[null] \u001b[0m__::act-interceptor::Pre-Start::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[null] \u001b[0m__::act-interceptor::Pre-End::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0mmain trigger file: /Users/bengtbrodersen/.cache/act/a116c5ea12795247/hostexecutor/.pre-step"}
+{"jobID":"step0","msg":"\u001b[1;90m❯  \u001b[0m\u001b[1;90m[Step 0] \u001b[0mRun echo Step0"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[null] \u001b[0m__::act-interceptor::Pre-Start::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[null] \u001b[0m__::act-interceptor::Pre-End::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0mmain trigger file: /Users/bengtbrodersen/.cache/act/39120ad56049548a/hostexecutor/.pre-step"}
+{"jobID":"step0","msg":"\u001b[1;90m❯  \u001b[0m\u001b[1;90m[Step 0] \u001b[0mRun echo Step0"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[null] \u001b[0m__::act-interceptor::Pre-Start::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[null] \u001b[0m__::act-interceptor::Pre-End::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0mmain trigger file: /Users/bengtbrodersen/.cache/act/78e953b4fe8435c0/hostexecutor/.pre-step"}
+{"jobID":"step0","msg":"\u001b[1;90m❯  \u001b[0m\u001b[1;90m[Step 0] \u001b[0mRun echo Step0"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[Pre] \u001b[0m__::act-interceptor::Pre-Start::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[Pre] \u001b[0m__::act-interceptor::Pre-End::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0mmain trigger file: /Users/bengtbrodersen/.cache/act/acc3f60323d29419/hostexecutor/.pre-step"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m__::act-interceptor::Main-Start::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0mStep0"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m__::act-interceptor::Main-End::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0mpost trigger file: /Users/bengtbrodersen/.cache/act/acc3f60323d29419/hostexecutor/.post-step"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[Post] \u001b[0m__::act-interceptor::Post-Start::"}
+{"jobID":"step0","msg":"   \u001b[1;90m[Step 0] \u001b[0m\u001b[1;90m[Post] \u001b[0m__::act-interceptor::Post-End::"}
+{"jobID":"step0","msg":"\u001b[1;90m⬤ \u001b[0m\u001b[1;90m[Step 0] \u001b[0mRun echo Step0\u001b[1;90m [18s]\u001b[0m"}
+{"jobID":"step0","msg":"\u001b[1;90m❯  \u001b[0m\u001b[1;90m[Step 0] \u001b[0mRun echo Step0"}
