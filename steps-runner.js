@@ -88,6 +88,8 @@ export async function init(steps, githubToken) {
 }
 
 export async function run(stage) {
+    let concurrentLogGroupOpen = false
+
     const steps = YAML.parse(fs.readFileSync(stepsFilePath).toString());
     const stepResults = steps.map(() => ({
         status: 'Queued',
@@ -102,144 +104,150 @@ export async function run(stage) {
         },
     }));
 
+    DEBUG && console.log(`__::Action::${stage}::Start::`);
+
     // --- tail act log file
     const actLogTail = new TailFile(actLogPath);
     await actLogTail.start();
     readline.createInterface({input: actLogTail, crlfDelay: Infinity})
         .on('line', async (line) => {
-                TRACE && console.log(colorizeCyan(line));
-                if (!line) return;
-                line = parseActLine(line);
+            if (!line) return;
+            TRACE && concurrentLog(colorizeCyan(line));
+            line = parseActLine(line);
 
-                if (!line.jobID) return;
-                const stepIndex = parseInt(line.jobID.replace(/^\D*/, ''));
-                const step = steps[stepIndex];
-                const stepResult = stepResults[stepIndex];
-                if (!stepResult) throw Error(`Unexpected step index: ${stepIndex}`);
+            if (!line.jobID) return;
+            const stepIndex = parseInt(line.jobID.replace(/^\D*/, ''));
+            const step = steps[stepIndex];
+            const stepResult = stepResults[stepIndex];
+            if (!stepResult) throw Error(`Unexpected step index: ${stepIndex}`);
 
-                // actual step lines
-                if (line.stepID?.[0] === String(1)) {
-                    if (!line.raw_output) {
-                        if (line.msg.startsWith(`⭐ Run ${stage} `)) {
-                            DEBUG && console.log(`__::Step::Start::${stepIndex}`);
-                            console.log(
-                                buildStepLogPrefix('Start') +
-                                buildStepIndicator(stepIndex) +
-                                buildStepHeadline(stage, step),
-                            );
-                        } else if (line.msg.startsWith('  ⚙  ::')) {
-                            // command files
-                            const command = line.msg.match(/^ {2}⚙ {2}::(?<type>[^:]+):: (?<parameter>.*)$/)?.groups;
-                            switch (command.type) {
-                                case 'set-output':
-                                    const outputCommand = command.parameter.match(/^(?<name>[^=]+)=(?<value>.*)/)?.groups;
-                                    if (!outputCommand) {
-                                        throw new Error(`Unexpected set-output command: ${line.msg}`);
-                                    }
-                                    stepResult.commandFiles['GITHUB_OUTPUT'][outputCommand.name] = outputCommand.value;
-                                    break;
-                                case 'set-env':
-                                    const envCommand = command.parameter.match(/^(?<name>[^=]+)=(?<value>.*)/)?.groups;
-                                    if (!envCommand) {
-                                        throw new Error(`Unexpected set-env command: ${line.msg}`);
-                                    }
-                                    stepResult.commandFiles['GITHUB_ENV'][envCommand.name] = envCommand.value;
-                                    break;
-                                case 'add-path':
-                                    stepResult.commandFiles['GITHUB_PATH'].push(command.parameter);
-                                    break;
-                                default:
-                                    core.warning('Unexpected command: ' + line.msg);
-                            }
-                        }
-                    } else if (line.raw_output) {
-                        console.log(
-                            buildStepLogPrefix() +
+            // actual step lines
+            if (line.stepID?.[0] === String(1)) {
+                if (!line.raw_output) {
+                    if (line.msg.startsWith(`⭐ Run ${stage} `)) {
+                        DEBUG && concurrentLog(`__::Step::Start::${stepIndex}`);
+                        concurrentLog(
+                            buildStepLogPrefix('Start') +
                             buildStepIndicator(stepIndex) +
-                            line.msg,
+                            buildStepHeadline(stage, step),
                         );
-                        stepResult.output += line.msg + EOL;
+                    } else if (line.msg.startsWith('  ⚙  ::')) {
+                        // command files
+                        const command = line.msg.match(/^ {2}⚙ {2}::(?<type>[^:]+):: (?<parameter>.*)$/)?.groups;
+                        switch (command.type) {
+                            case 'set-output':
+                                const outputCommand = command.parameter.match(/^(?<name>[^=]+)=(?<value>.*)/)?.groups;
+                                if (!outputCommand) {
+                                    throw new Error(`Unexpected set-output command: ${line.msg}`);
+                                }
+                                stepResult.commandFiles['GITHUB_OUTPUT'][outputCommand.name] = outputCommand.value;
+                                break;
+                            case 'set-env':
+                                const envCommand = command.parameter.match(/^(?<name>[^=]+)=(?<value>.*)/)?.groups;
+                                if (!envCommand) {
+                                    throw new Error(`Unexpected set-env command: ${line.msg}`);
+                                }
+                                stepResult.commandFiles['GITHUB_ENV'][envCommand.name] = envCommand.value;
+                                break;
+                            case 'add-path':
+                                stepResult.commandFiles['GITHUB_PATH'].push(command.parameter);
+                                break;
+                            default:
+                                core.warning('Unexpected command: ' + line.msg);
+                        }
                     } else if (line.stepResult) {
                         stepResult.result = line.stepResult;
                         stepResult.executionTime = line.executionTime;
-                        console.log(
+                        concurrentLog(
                             buildStepLogPrefix('End', stepResult.result) +
                             buildStepIndicator(stepIndex) +
                             buildStepHeadline(stage, step, stepResult),
                         );
-                        DEBUG && console.log(`__::Step::End::${stepIndex}`)
+                        DEBUG && concurrentLog(`__::Step::End::${stepIndex}`)
                     }
-                } else if (line.raw_output) {
-                    const interceptorEvent = line.msg.match(/^__::Interceptor::(?<stage>[^:]+)::(?<type>[^:]+)::(?<value>[^:]*)?/)?.groups;
-                    if (interceptorEvent) {
-                        if (interceptorEvent.stage !== stage) throw Error(`Unexpected stage event: ${line.msg}`);
+                } else {
+                    concurrentLog(
+                        buildStepLogPrefix() +
+                        buildStepIndicator(stepIndex) +
+                        line.msg,
+                    );
+                    stepResult.output += line.msg + EOL;
+                }
+            } else if (line.raw_output) {
+                const interceptorEvent = line.msg.match(/^__::Interceptor::(?<stage>[^:]+)::(?<type>[^:]+)::(?<value>[^:]*)?/)?.groups;
+                if (interceptorEvent) {
+                    if (interceptorEvent.stage !== stage) throw Error(`Unexpected stage event: ${line.msg}`);
 
-                        line.stage = interceptorEvent.stage;
-                        if (interceptorEvent.type === 'Start') {
-                            stepResult.status = 'In Progress';
-                        } else if (interceptorEvent.type === 'End') {
-                            stepResult.status = 'Completed';
+                    line.stage = interceptorEvent.stage;
+                    if (interceptorEvent.type === 'Start') {
+                        stepResult.status = 'In Progress';
+                    } else if (interceptorEvent.type === 'End') {
+                        stepResult.status = 'Completed';
 
-                            // check if the stage has been completed
-                            if (Object.values(stepResults).every((result) => result.status === 'Completed')) {
-                                core.endGroup()
-
-                                // stop tail processes
-                                await actLogTail.quit();
-
-                                steps.forEach((step, stepIndex) => {
-                                    const stepResult = stepResults[stepIndex];
-
-                                    // log aggregated step results
-                                    if (stepResult.result) {
-                                        console.log('')
-                                        core.startGroup(' ' +
-                                            buildStepLogPrefix('End', stepResult.result) +
-                                            buildStepHeadline(stage, step, stepResult)
-                                        );
-                                        console.log(removeTrailingNewLine(stepResult.output));
-                                        core.endGroup();
-                                    }
-
-                                    // command files
-                                    Object.entries(stepResult.commandFiles['GITHUB_OUTPUT'])
-                                        .forEach(([key, value]) => {
-                                            DEBUG && console.log(`Set output: ${key}=${value}`);
-                                            core.setOutput(key, value);
-                                            if (step.id) {
-                                                const stepKey = step.id + '-' + key;
-                                                DEBUG && console.log(`Set output: ${stepKey}=${value}`);
-                                                core.setOutput(stepKey, value);
-                                            }
-                                        });
-                                    Object.entries(stepResult.commandFiles['GITHUB_ENV'])
-                                        .forEach(([key, value]) => {
-                                            DEBUG && console.log(`Export variable: ${key}=${value}`);
-                                            core.exportVariable(key, value);
-                                        });
-                                    stepResult.commandFiles['GITHUB_PATH']
-                                        .forEach((path) => {
-                                            DEBUG && console.log(`Add path: ${path}`);
-                                            core.addPath(path);
-                                        });
-                                });
-
-                                DEBUG && console.log(`__::Action::${stage}::End::`);
+                        // check if the stage has been completed
+                        if (Object.values(stepResults).every((result) => result.status === 'Completed')) {
+                            if (concurrentLogGroupOpen) {
+                                core.endGroup();
                             }
+
+                            // stop tail processes
+                            await actLogTail.quit();
+
+                            steps.forEach((step, stepIndex) => {
+                                const stepResult = stepResults[stepIndex];
+
+                                // log aggregated step results
+                                if (stepResult.result) {
+                                    console.log('')
+                                    core.startGroup(' ' +
+                                        buildStepLogPrefix('End', stepResult.result) +
+                                        buildStepHeadline(stage, step, stepResult)
+                                    );
+                                    console.log(removeTrailingNewLine(stepResult.output));
+                                    core.endGroup();
+                                }
+
+                                // command files
+                                Object.entries(stepResult.commandFiles['GITHUB_OUTPUT'])
+                                    .forEach(([key, value]) => {
+                                        DEBUG && console.log(`Set output: ${key}=${value}`);
+                                        core.setOutput(key, value);
+                                        if (step.id) {
+                                            const stepKey = step.id + '-' + key;
+                                            DEBUG && console.log(`Set output: ${stepKey}=${value}`);
+                                            core.setOutput(stepKey, value);
+                                        }
+                                    });
+                                Object.entries(stepResult.commandFiles['GITHUB_ENV'])
+                                    .forEach(([key, value]) => {
+                                        DEBUG && console.log(`Export variable: ${key}=${value}`);
+                                        core.exportVariable(key, value);
+                                    });
+                                stepResult.commandFiles['GITHUB_PATH']
+                                    .forEach((path) => {
+                                        DEBUG && console.log(`Add path: ${path}`);
+                                        core.addPath(path);
+                                    });
+                            });
+
+                            DEBUG && console.log(`__::Action::${stage}::End::`);
                         }
-                    } else if (DEBUG) {
-                        console.log(line.msg);
                     }
                 }
             }
-        )
-    ;
+        });
 
-
-    DEBUG && console.log(`__::Action::${stage}::Start::`);
-    core.startGroup("Concurrent logs"); // TODO lazy start and end if any log occurs
     // --- create the trigger file to signal step runner to start the next stage
     fs.writeFileSync(path.join(ACTION_TEMP_DIR, `.Interceptor-${stage}-Stage`), '');
+
+
+    function concurrentLog(...args) {
+        if (!concurrentLogGroupOpen) {
+            core.startGroup("Concurrent logs");
+            concurrentLogGroupOpen = true;
+        }
+        console.log(...args);
+    }
 }
 
 // --- Utility functions ---
