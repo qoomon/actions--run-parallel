@@ -5,7 +5,7 @@ With this action, you can run parallel steps in a GitHub Actions workflow jobs.
 Under the hood this action utilize [act](https://github.com/nektos/act).
 
 ## Known Issues
-- act doesn't support `GITHUB_STEP_SUMMARY` (https://github.com/nektos/act/issues/2759)
+- act doesn't implement support for `GITHUB_STEP_SUMMARY` (https://github.com/nektos/act/issues/2759)
 - Only 4 parallel steps supported by act (https://github.com/nektos/act/issues/2756)
 
 ## Usage
