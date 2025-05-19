@@ -27,7 +27,6 @@ jobs:
                   core.addPath('./test-path')
                   await core.summary
                     .addHeading('Test Results')
-                    // TODO .addCodeBlock(generateTestResults(), "js")
                     .addTable([
                     [{data: 'File', header: true}, {data: 'Result', header: true}],
                     ['foo.js', 'Pass ✅'],

@@ -12,13 +12,13 @@ export const ACTION_COMMAND_FILES = Object.fromEntries([
     "GITHUB_STEP_SUMMARY",
 ].map((varName) => [varName, process.env[varName]]));
 
-export const ACTION_TEMP_DIR = `${process.env["RUNNER_TEMP"]}/${process.env["GITHUB_ACTION"]}`;
+export const ACTION_STEP_TEMP_DIR = `${process.env["RUNNER_TEMP"]}/${process.env["GITHUB_ACTION"]}`;
 {
     if (!process.env["RUNNER_TEMP"] || !process.env["GITHUB_ACTION"]) {
         throw new Error("RUNNER_TEMP and GITHUB_ACTION environment variables are required "
             + "to create a temporary directory for an action.");
     }
-    await fs.promises.mkdir(ACTION_TEMP_DIR, {recursive: true});
+    await fs.promises.mkdir(ACTION_STEP_TEMP_DIR, {recursive: true});
 }
 
 export async function untilFilePresent(filePath) {
@@ -70,4 +70,32 @@ export function colorizeYellow(value) {
     return value.split("\n")
         .map((line) => `\x1b[1;33m${line}\x1b[0m`)
         .join('\n');
+}
+
+export class CompletablePromise extends Promise {
+    status = 'pending';
+
+    constructor(callback = () => {
+    }) {
+        let _resolve = null;
+        let _reject = null;
+        super((resolve, reject) => {
+            _resolve = resolve;
+            _reject = reject;
+            return callback(resolve, reject);
+        });
+
+        this.resolve = (value) => {
+            this.status = 'resolved';
+            _resolve(value)
+        };
+        this.reject = (reason) => {
+            this.status = 'rejected';
+            _reject(reason);
+        }
+    }
+}
+
+export async function runAsync(fn) {
+    await fn()
 }

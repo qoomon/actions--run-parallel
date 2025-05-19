@@ -6,10 +6,10 @@ import {fileURLToPath} from "url";
 import {dirname} from "path";
 import readline from "node:readline";
 import {
-    ACTION_TEMP_DIR,
+    ACTION_STEP_TEMP_DIR,
     colorizeCyan,
     colorizeGray,
-    colorizeRed,
+    colorizeRed, CompletablePromise,
     DEBUG,
     TRACE,
     untilFilePresent
@@ -21,8 +21,8 @@ import TailFile from "@logdna/tail-file";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const stepsFilePath = path.join(ACTION_TEMP_DIR, 'steps.yaml');
-const actLogPath = path.join(ACTION_TEMP_DIR, 'act.log');
+const stepsFilePath = path.join(ACTION_STEP_TEMP_DIR, 'steps.yaml');
+const actLogPath = path.join(ACTION_STEP_TEMP_DIR, 'act.log');
 
 export async function init(steps, githubToken) {
     const GITHUB_EVENT_PATH = process.env["GITHUB_EVENT_PATH"];
@@ -43,7 +43,7 @@ export async function init(steps, githubToken) {
                 {
                     uses: "__/act-interceptor@local",
                     with: {
-                        'temp-dir': ACTION_TEMP_DIR,
+                        'temp-dir': ACTION_STEP_TEMP_DIR,
                         'host-working-directory': WORKING_DIRECTORY,
                     }
                 },
@@ -53,16 +53,17 @@ export async function init(steps, githubToken) {
                     uses: "__/act-interceptor@local",
                     with: {
                         'position': 'Main::End',
-                        'temp-dir': ACTION_TEMP_DIR,
+                        'temp-dir': ACTION_STEP_TEMP_DIR,
                     }
                 },
             ],
         };
     }
 
-    const workflowFilePath = path.join(ACTION_TEMP_DIR, 'steps-workflow.yaml'); // TODO [Multi Act Runner]
+    const workflowFilePath = path.join(ACTION_STEP_TEMP_DIR, 'steps-workflow.yaml'); // TODO [Multi Act Runner]
     fs.writeFileSync(workflowFilePath, YAML.stringify(workflow));
 
+    fs.writeFileSync(actLogPath, '');
     const actLogFile = fs.openSync(actLogPath, 'w');
     //TODO [Multi Act Runner]
     child_process.spawn(
@@ -84,7 +85,35 @@ export async function init(steps, githubToken) {
         }
     ).unref();
 
-    await untilFilePresent(actLogPath); // TODO check if this is still needed
+    const initPromise = new CompletablePromise();
+
+    // --- tail act log file
+    const actLogTail = new TailFile(actLogPath);
+    await actLogTail.start();
+    readline.createInterface({input: actLogTail, crlfDelay: Infinity})
+        .on('line', async (line) => {
+            if(initPromise.status !== 'pending') return;
+
+            if (!line) return;
+            TRACE && colorizeCyan(line);
+            line = parseActLine(line);
+
+            if(line.level === 'error') {
+                if (line.msg.startsWith('workflow is not valid.')) {
+                    const workflowStepError = line.msg.match(/Failed to match run-step: Line: (?<line>\d+) Column (?<column>\d+): (?<msg>.*)$/)?.groups;
+                    initPromise.reject(new Error(`Invalid steps input - ${workflowStepError.msg}`))
+                } else if (!(
+                    line.msg !== 'repository does not exist'
+                )){
+                    initPromise.reject(line);
+                }
+            } else if (line.job) {
+                initPromise.resolve();
+            }
+        });
+
+    await initPromise;
+    await actLogTail.quit();
 }
 
 export async function run(stage) {
@@ -105,6 +134,7 @@ export async function run(stage) {
     }));
 
     DEBUG && console.log(`__::Action::${stage}::Start::`);
+    const runPromise = new CompletablePromise();
 
     // --- tail act log file
     const actLogTail = new TailFile(actLogPath);
@@ -190,9 +220,6 @@ export async function run(stage) {
                                 core.endGroup();
                             }
 
-                            // stop tail processes
-                            await actLogTail.quit();
-
                             steps.forEach((step, stepIndex) => {
                                 const stepResult = stepResults[stepIndex];
 
@@ -230,6 +257,7 @@ export async function run(stage) {
                                     });
                             });
 
+                            runPromise.resolve();
                             DEBUG && console.log(`__::Action::${stage}::End::`);
                         }
                     }
@@ -238,8 +266,10 @@ export async function run(stage) {
         });
 
     // --- create the trigger file to signal step runner to start the next stage
-    fs.writeFileSync(path.join(ACTION_TEMP_DIR, `.Interceptor-${stage}-Stage`), '');
+    fs.writeFileSync(path.join(ACTION_STEP_TEMP_DIR, `.Interceptor-${stage}-Stage`), '');
 
+    await runPromise;
+    await actLogTail.quit();
 
     function concurrentLog(...args) {
         if (!concurrentLogGroupOpen) {
