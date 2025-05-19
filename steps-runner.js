@@ -151,23 +151,23 @@ export async function run(stage) {
                                 default:
                                     core.warning('Unexpected command: ' + line.msg);
                             }
+                        } else if (line.stepResult) {
+                            stepResult.result = line.stepResult;
+                            stepResult.executionTime = line.executionTime;
+                            console.log(
+                                buildStepLogPrefix('End', stepResult.result) +
+                                buildStepIndicator(stepIndex) +
+                                buildStepHeadline(stage, step, stepResult),
+                            );
+                            DEBUG && console.log(`__::Step::End::${stepIndex}`)
                         }
-                    } else if (line.raw_output) {
+                    } else {
                         console.log(
                             buildStepLogPrefix() +
                             buildStepIndicator(stepIndex) +
                             line.msg,
                         );
                         stepResult.output += line.msg + EOL;
-                    } else if (line.stepResult) {
-                        stepResult.result = line.stepResult;
-                        stepResult.executionTime = line.executionTime;
-                        console.log(
-                            buildStepLogPrefix('End', stepResult.result) +
-                            buildStepIndicator(stepIndex) +
-                            buildStepHeadline(stage, step, stepResult),
-                        );
-                        DEBUG && console.log(`__::Step::End::${stepIndex}`)
                     }
                 } else if (line.raw_output) {
                     const interceptorEvent = line.msg.match(/^__::Interceptor::(?<stage>[^:]+)::(?<type>[^:]+)::(?<value>[^:]*)?/)?.groups;
