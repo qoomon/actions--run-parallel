@@ -9,10 +9,10 @@ import {
     ACTION_STEP_TEMP_DIR,
     colorizeCyan,
     colorizeGray,
-    colorizeRed, CompletablePromise,
+    colorizeRed,
+    CompletablePromise,
     DEBUG,
-    TRACE,
-    untilFilePresent
+    TRACE
 } from "./act-interceptor/utils.js";
 import core from "@actions/core";
 import {EOL} from "node:os";
@@ -21,105 +21,36 @@ import TailFile from "@logdna/tail-file";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const stepsFilePath = path.join(ACTION_STEP_TEMP_DIR, 'steps.yaml');
-const actLogPath = path.join(ACTION_STEP_TEMP_DIR, 'act.log');
-
-export async function init(steps, githubToken) {
-    const GITHUB_EVENT_PATH = process.env["GITHUB_EVENT_PATH"];
-    const GITHUB_ACTOR = process.env["GITHUB_ACTOR"];
-    const WORKING_DIRECTORY = process.cwd();
-
-    fs.writeFileSync(stepsFilePath, YAML.stringify(steps));
-    const workflow = {
-        on: "workflow_dispatch",
-        jobs: {},
-    }
-    for (const [stepIndex, step] of Object.entries(steps)) {
-        const jobId = `Step${stepIndex}`
-
-        workflow.jobs[jobId] = {
-            "runs-on": "host", // refers to gh act parameter "--platform", "host=-self-hosted",
-            "steps": [
-                {
-                    uses: "__/act-interceptor@local",
-                    with: {
-                        'temp-dir': ACTION_STEP_TEMP_DIR,
-                        'host-working-directory': WORKING_DIRECTORY,
-                    }
-                },
-                step,
-                {
-                    if: "always()",
-                    uses: "__/act-interceptor@local",
-                    with: {
-                        'position': 'Main::End',
-                        'temp-dir': ACTION_STEP_TEMP_DIR,
-                    }
-                },
-            ],
-        };
-    }
-
-    const workflowFilePath = path.join(ACTION_STEP_TEMP_DIR, 'steps-workflow.yaml'); // TODO [Multi Act Runner]
-    fs.writeFileSync(workflowFilePath, YAML.stringify(workflow));
-
-    fs.writeFileSync(actLogPath, '');
-    const actLogFile = fs.openSync(actLogPath, 'w');
-    //TODO [Multi Act Runner]
-    child_process.spawn(
-        "gh", ["act", "--workflows", workflowFilePath,
-            "--bind", // do not copy working directory files
-            "--platform", "host=-self-hosted",
-            "--local-repository", "__/act-interceptor@local" + "=" + `${__dirname}/act-interceptor`,
-            "--secret", `GITHUB_TOKEN=${githubToken}`,
-            GITHUB_EVENT_PATH ? ["--eventpath", GITHUB_EVENT_PATH] : [],
-            GITHUB_ACTOR ? ["--actor", GITHUB_ACTOR] : [],
-
-            "--action-offline-mode",
-            "--json",
-        ].flat(),
-        {
-            detached: true,
-            stdio: ['ignore', actLogFile, actLogFile],
-            env: {...process.env, GH_TOKEN: githubToken},
-        }
-    ).unref();
-
-    const initPromise = new CompletablePromise();
-
-    // --- tail act log file
-    const actLogTail = new TailFile(actLogPath);
-    await actLogTail.start();
-    readline.createInterface({input: actLogTail, crlfDelay: Infinity})
-        .on('line', async (line) => {
-            if(initPromise.status !== 'pending') return;
-
-            if (!line) return;
-            TRACE && colorizeCyan(line);
-            line = parseActLine(line);
-
-            if(line.level === 'error') {
-                if (line.msg.startsWith('workflow is not valid.')) {
-                    const workflowStepError = line.msg.match(/Failed to match run-step: Line: (?<line>\d+) Column (?<column>\d+): (?<msg>.*)$/)?.groups;
-                    initPromise.reject(new Error(`Invalid steps input - ${workflowStepError.msg}`))
-                } else if (!(
-                    line.msg !== 'repository does not exist'
-                )){
-                    initPromise.reject(line);
-                }
-            } else if (line.job) {
-                initPromise.resolve();
-            }
-        });
-
-    await initPromise;
-    await actLogTail.quit();
-}
+const actLogFilePath = path.join(ACTION_STEP_TEMP_DIR, 'act.log');
+const errorStepsFilePath = path.join(ACTION_STEP_TEMP_DIR, '.steps-error');
 
 export async function run(stage) {
-    let concurrentLogGroupOpen = false
+    const githubToken = core.getInput("token", {required: true});
+    const steps = getInput("steps", {required: true}, (value) => {
+        let steps;
+        try {
+            steps = YAML.parse(value);
+        } catch (e) {
+            core.setFailed(`Invalid steps input - Invalid YAML - ${e.message}`);
+            process.exit(1);
+        }
 
-    const steps = YAML.parse(fs.readFileSync(stepsFilePath).toString());
+        if (!Array.isArray(steps)) {
+            core.setFailed(`Invalid steps input - Must be an YAML array`);
+            process.exit(1);
+        }
+
+        return steps;
+    });
+
+    const stagePromise = new CompletablePromise();
+    DEBUG && console.log(`__::Action::${stage}::Start::`);
+
+    if (stage === 'Pre') {
+        await startAct(steps, githubToken, actLogFilePath);
+        fs.appendFileSync(errorStepsFilePath, ''); // ensure the file does exist
+    }
+
     const stepResults = steps.map(() => ({
         status: 'Queued',
         output: '',
@@ -132,18 +63,35 @@ export async function run(stage) {
             'GITHUB_STEP_SUMMARY': '',
         },
     }));
+    fs.readFileSync(errorStepsFilePath).toString().split('\n').filter((line) => !!line)
+        .forEach((stepIndex) => completeStep(stepIndex, 'error'));
 
-    DEBUG && console.log(`__::Action::${stage}::Start::`);
-    const runPromise = new CompletablePromise();
+    let concurrentLogGroupOpen = false
+
+    function concurrentLog(...args) {
+        if (!concurrentLogGroupOpen) {
+            core.startGroup("Concurrent logs");
+            concurrentLogGroupOpen = true;
+        }
+        console.log(...args);
+    }
 
     // --- tail act log file
-    const actLogTail = new TailFile(actLogPath);
+    const actLogTail = new TailFile(actLogFilePath, {startPos: stage === 'Pre' ? 0 : null});
     await actLogTail.start();
     readline.createInterface({input: actLogTail, crlfDelay: Infinity})
         .on('line', async (line) => {
+            if (stagePromise.status !== 'pending') return;
             if (!line) return;
             TRACE && concurrentLog(colorizeCyan(line));
             line = parseActLine(line);
+
+            if (line.level === 'error') {
+                if (line.msg.startsWith('workflow is not valid.')) {
+                    const workflowStepError = line.msg.match(/Failed to match run-step: Line: (?<line>\d+) Column (?<column>\d+): (?<msg>.*)$/)?.groups;
+                    stagePromise.reject(new Error(`Invalid steps input - ${workflowStepError?.msg ?? line.msg}`))
+                }
+            }
 
             if (!line.jobID) return;
             const stepIndex = parseInt(line.jobID.replace(/^\D*/, ''));
@@ -154,7 +102,20 @@ export async function run(stage) {
             // actual step lines
             if (line.stepID?.[0] === String(1)) {
                 if (!line.raw_output) {
-                    if (line.msg.startsWith(`⭐ Run ${stage} `)) {
+                    if (line.level === 'error') {
+                        if (line.msg.startsWith('failed to fetch ')) {
+                            const workflowStepError = line.msg.match(/GoGitActionCache (?<msg>failed to fetch \S+ with ref \S+)/)?.groups;
+                            const errorMessage = workflowStepError?.msg ?? line.msg;
+                            concurrentLog(
+                                buildStepLogPrefix() +
+                                buildStepIndicator(stepIndex) +
+                                '::error::' + errorMessage,
+                            );
+                            DEBUG && concurrentLog(`__::Step::End::${stepIndex}`)
+                            stepResult.output += '::error::' + errorMessage + EOL;
+                            completeStep(stepIndex, 'error');
+                        }
+                    } else if (line.msg.startsWith(`⭐ Run ${stage} `)) {
                         DEBUG && concurrentLog(`__::Step::Start::${stepIndex}`);
                         concurrentLog(
                             buildStepLogPrefix('Start') +
@@ -203,63 +164,19 @@ export async function run(stage) {
                     );
                     stepResult.output += line.msg + EOL;
                 }
+            } else if (line.jobResult) {
+                if (!stepResult.result && line.jobResult === 'failure') {
+                    completeStep(stepIndex, 'error');
+                }
             } else if (line.raw_output) {
                 const interceptorEvent = line.msg.match(/^__::Interceptor::(?<stage>[^:]+)::(?<type>[^:]+)::(?<value>[^:]*)?/)?.groups;
                 if (interceptorEvent) {
                     if (interceptorEvent.stage !== stage) throw Error(`Unexpected stage event: ${line.msg}`);
 
-                    line.stage = interceptorEvent.stage;
                     if (interceptorEvent.type === 'Start') {
                         stepResult.status = 'In Progress';
                     } else if (interceptorEvent.type === 'End') {
-                        stepResult.status = 'Completed';
-
-                        // check if the stage has been completed
-                        if (Object.values(stepResults).every((result) => result.status === 'Completed')) {
-                            if (concurrentLogGroupOpen) {
-                                core.endGroup();
-                            }
-
-                            steps.forEach((step, stepIndex) => {
-                                const stepResult = stepResults[stepIndex];
-
-                                // log aggregated step results
-                                if (stepResult.result) {
-                                    console.log('')
-                                    core.startGroup(' ' +
-                                        buildStepLogPrefix('End', stepResult.result) +
-                                        buildStepHeadline(stage, step, stepResult)
-                                    );
-                                    console.log(removeTrailingNewLine(stepResult.output));
-                                    core.endGroup();
-                                }
-
-                                // command files
-                                Object.entries(stepResult.commandFiles['GITHUB_OUTPUT'])
-                                    .forEach(([key, value]) => {
-                                        DEBUG && console.log(`Set output: ${key}=${value}`);
-                                        core.setOutput(key, value);
-                                        if (step.id) {
-                                            const stepKey = step.id + '-' + key;
-                                            DEBUG && console.log(`Set output: ${stepKey}=${value}`);
-                                            core.setOutput(stepKey, value);
-                                        }
-                                    });
-                                Object.entries(stepResult.commandFiles['GITHUB_ENV'])
-                                    .forEach(([key, value]) => {
-                                        DEBUG && console.log(`Export variable: ${key}=${value}`);
-                                        core.exportVariable(key, value);
-                                    });
-                                stepResult.commandFiles['GITHUB_PATH']
-                                    .forEach((path) => {
-                                        DEBUG && console.log(`Add path: ${path}`);
-                                        core.addPath(path);
-                                    });
-                            });
-
-                            runPromise.resolve();
-                            DEBUG && console.log(`__::Action::${stage}::End::`);
-                        }
+                        completeStep(stepIndex);
                     }
                 }
             }
@@ -268,19 +185,145 @@ export async function run(stage) {
     // --- create the trigger file to signal step runner to start the next stage
     fs.writeFileSync(path.join(ACTION_STEP_TEMP_DIR, `.Interceptor-${stage}-Stage`), '');
 
-    await runPromise;
-    await actLogTail.quit();
+    await stagePromise
+        .finally(() => actLogTail.quit());
 
-    function concurrentLog(...args) {
-        if (!concurrentLogGroupOpen) {
-            core.startGroup("Concurrent logs");
-            concurrentLogGroupOpen = true;
+    function completeStep(stepIndex, result) {
+        const stepResult = stepResults[stepIndex];
+        stepResult.status = 'Completed';
+        if (result) {
+            stepResult.result = result;
+            if (result === 'error') {
+                fs.appendFileSync(errorStepsFilePath, stepIndex + EOL);
+            }
         }
-        console.log(...args);
+
+        // check if the stage has been completed
+        if (Object.values(stepResults).every((result) => result.status === 'Completed')) {
+            if (concurrentLogGroupOpen) {
+                core.endGroup();
+            }
+
+            stepResults.forEach((stepResult, stepIndex) => {
+                const step = steps[stepIndex];
+
+                // log aggregated step results
+                if (stepResult.result) {
+                    console.log('')
+                    core.startGroup(' ' +
+                        buildStepLogPrefix('End', stepResult.result) +
+                        buildStepHeadline(stage, step, stepResult)
+                    );
+                    console.log(removeTrailingNewLine(stepResult.output));
+                    core.endGroup();
+                }
+
+                // command files
+                Object.entries(stepResult.commandFiles['GITHUB_OUTPUT'])
+                    .forEach(([key, value]) => {
+                        DEBUG && console.log(`Set output: ${key}=${value}`);
+                        core.setOutput(key, value);
+                        if (step.id) {
+                            const stepKey = step.id + '-' + key;
+                            DEBUG && console.log(`Set output: ${stepKey}=${value}`);
+                            core.setOutput(stepKey, value);
+                        }
+                    });
+                Object.entries(stepResult.commandFiles['GITHUB_ENV'])
+                    .forEach(([key, value]) => {
+                        DEBUG && console.log(`Export variable: ${key}=${value}`);
+                        core.exportVariable(key, value);
+                    });
+                stepResult.commandFiles['GITHUB_PATH']
+                    .forEach((path) => {
+                        DEBUG && console.log(`Add path: ${path}`);
+                        core.addPath(path);
+                    });
+            });
+
+            DEBUG && console.log(`__::Action::${stage}::End::`);
+
+            // complete stage promise
+            if (stepResults.every((result) => !result.result || result.result === 'success')) {
+                stagePromise.resolve();
+            } else {
+                stagePromise.reject();
+            }
+        }
     }
 }
 
+async function startAct(steps, githubToken, logFilePath) {
+    // Install gh-act extension
+    child_process.execSync("gh extension install https://github.com/nektos/gh-act", {
+        stdio: 'inherit',
+        env: {...process.env, GH_TOKEN: githubToken}
+    });
+
+    const GITHUB_EVENT_PATH = process.env["GITHUB_EVENT_PATH"];
+    const GITHUB_ACTOR = process.env["GITHUB_ACTOR"];
+    const WORKING_DIRECTORY = process.cwd();
+
+    const workflow = {
+        on: "workflow_dispatch",
+        jobs: {},
+    }
+    for (const [stepIndex, step] of Object.entries(steps)) {
+        const jobId = `Step${stepIndex}`;
+        workflow.jobs[jobId] = {
+            "runs-on": "host", // refers to gh act parameter "--platform", "host=-self-hosted",
+            "steps": [
+                {
+                    uses: "__/act-interceptor@local",
+                    with: {
+                        'temp-dir': ACTION_STEP_TEMP_DIR,
+                        'host-working-directory': WORKING_DIRECTORY,
+                    }
+                },
+                step,
+                {
+                    if: "always()",
+                    uses: "__/act-interceptor@local",
+                    with: {
+                        'position': 'Main::End',
+                        'temp-dir': ACTION_STEP_TEMP_DIR,
+                    }
+                },
+            ],
+        };
+    }
+
+    const workflowFilePath = path.join(ACTION_STEP_TEMP_DIR, 'steps-workflow.yaml'); // TODO [Multi Act Runner]
+    fs.writeFileSync(workflowFilePath, YAML.stringify(workflow));
+
+    fs.writeFileSync(logFilePath, ''); // ensure the file does exist
+    const actLogFileDescriptor = fs.openSync(logFilePath, 'w');
+    //TODO [Multi Act Runner]
+    child_process.spawn(
+        "gh", ["act", "--workflows", workflowFilePath,
+            "--bind", // do not copy working directory files
+            "--platform", "host=-self-hosted",
+            "--local-repository", "__/act-interceptor@local" + "=" + `${__dirname}/act-interceptor`,
+            GITHUB_EVENT_PATH ? ["--eventpath", GITHUB_EVENT_PATH] : [],
+            GITHUB_ACTOR ? ["--actor", GITHUB_ACTOR] : [],
+            "--secret", `GITHUB_TOKEN=${githubToken}`,
+            "--action-offline-mode",
+            "--json",
+        ].flat(),
+        {
+            detached: true,
+            stdio: ['ignore', actLogFileDescriptor, actLogFileDescriptor],
+            env: {...process.env, GH_TOKEN: githubToken},
+        }
+    ).unref();
+}
+
 // --- Utility functions ---
+
+function getInput(name, options, fn) {
+    const value = core.getInput(name, options);
+    return fn(value);
+}
 
 function parseActLine(line) {
     let result = {
