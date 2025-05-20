@@ -1,16 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const DEBUG = process.env["RUNNER_DEBUG"] === "1";
-export const TRACE = false;
+export const DEBUG = process.env["RUNNER_DEBUG"];
+export const TRACE = process.env["RUNNER_DEBUG"] === "2";
 export const LOCAL = process.env["RUNNER_LOCAL"] === "1";
-
-export const ACTION_COMMAND_FILES = Object.fromEntries([
-    "GITHUB_OUTPUT",
-    "GITHUB_ENV",
-    "GITHUB_PATH",
-    "GITHUB_STEP_SUMMARY",
-].map((varName) => [varName, process.env[varName]]));
 
 export const ACTION_STEP_TEMP_DIR = `${process.env["RUNNER_TEMP"]}/${process.env["GITHUB_ACTION"]}`;
 {
