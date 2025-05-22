@@ -40,6 +40,11 @@ export async function run(stage) {
             process.exit(1);
         }
 
+        if(steps.lenght > os.cpus().length) {
+            core.setFailed(`Invalid steps input - Parallel steps are limited to the number of available CPUs (${os.cpus().length})`);
+            process.exit(1);
+        }
+
         const stepIds = new Set();
         for (const step of steps) {
             if (step.id !== undefined) {
