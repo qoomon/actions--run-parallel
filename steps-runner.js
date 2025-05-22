@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import YAML from "yaml";
 import path from "node:path";
 import {fileURLToPath} from "url";
-import {dirname} from "path";
+import os from 'os';
 import readline from "node:readline";
 import {
     ACTION_STEP_TEMP_DIR,
@@ -19,7 +19,7 @@ import {EOL} from "node:os";
 import TailFile from "@logdna/tail-file";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = path.dirname(__filename);
 
 const actLogFilePath = path.join(ACTION_STEP_TEMP_DIR, 'act.log');
 const errorStepsFilePath = path.join(ACTION_STEP_TEMP_DIR, '.error-steps');
