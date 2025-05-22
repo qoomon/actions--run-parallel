@@ -8,27 +8,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: qoomon/actions--parallel-steps@main
-        id: parallel
+        id: parallel-steps
         with:
           steps: |
-            - run: |
-                echo Step0
-            
-            - name : Test File Creation
-              run: |
-                echo Step1
-                echo Step1 > test-file.txt
-            
-            - name : Test Command Files
-              id: step2
-              uses: actions/github-script@v7
+            - run: "echo GITHUB_ACTION=$GITHUB_ACTION"
+            - uses: actions/checkout@v4
+            - uses: actions/setup-java@v4
               with:
-                script: |
-                  console.log('Step2')
-                  core.setOutput('test-output', 'Step2')
-                  core.exportVariable('TEST_VARIABLE', 'Step2')
-                  core.addPath('./test-path')
-                  await core.summary.addHeading('Step2').write()
+                distribution: 'temurin' # See 'Supported distributions' for available options
+                java-version: '21'
+      - run: ls -lachs
+
+#          steps: |
+#            - run: |
+#                echo Step0
+#
+#            - name : Test File Creation
+#              run: |
+#                echo Step1
+#                echo Step1 > test-file.txt
+#
+#            - name : Test Command Files
+#              id: step2
+#              uses: actions/github-script@v7
+#              with:
+#                script: |
+#                  console.log('Step2')
+#                  core.setOutput('test-output', 'Step2')
+#                  core.exportVariable('TEST_VARIABLE', 'Step2')
+#                  core.addPath('./test-path')
+#                  await core.summary.addHeading('Step2').write()
 
       - run: |
           ls -lachs

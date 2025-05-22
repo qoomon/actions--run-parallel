@@ -9,6 +9,7 @@ import {
     ACTION_STEP_TEMP_DIR,
     colorizeCyan,
     colorizeGray,
+    colorizePurple,
     colorizeRed,
     CompletablePromise,
     DEBUG,
@@ -40,7 +41,7 @@ export async function run(stage) {
             process.exit(1);
         }
 
-        if(steps.lenght > os.cpus().length) {
+        if (steps.lenght > os.cpus().length) {
             core.setFailed(`Invalid steps input - Parallel steps are limited to the number of available CPUs (${os.cpus().length})`);
             process.exit(1);
         }
@@ -66,7 +67,7 @@ export async function run(stage) {
     });
 
     const stagePromise = new CompletablePromise();
-    DEBUG && console.log(`__::Action::${stage}::Start::`);
+    DEBUG && console.log(colorizePurple(`__::Action::${stage}::Start::`));
 
     if (stage === 'Pre') {
         await startAct(steps, githubToken, actLogFilePath);
@@ -88,7 +89,7 @@ export async function run(stage) {
     await fs.readFile(errorStepsFilePath).then(async (buffer) => {
         const errorSteps = buffer.toString().split('\n').filter((line) => !!line);
         for (const stepIndex of errorSteps) {
-            await completeStep(stepIndex, 'error');
+            await endStep(stepIndex, 'error');
         }
     })
 
@@ -107,7 +108,10 @@ export async function run(stage) {
     await actLogTail.start();
     readline.createInterface({input: actLogTail, crlfDelay: Infinity})
         .on('line', async (line) => {
-            if (stagePromise.status !== 'pending') return;
+            if (stagePromise.status !== 'pending') {
+                return;
+            }
+
             if (!line) return;
             TRACE && concurrentLog(colorizeCyan(line));
             line = parseActLine(line);
@@ -116,12 +120,10 @@ export async function run(stage) {
                 const ignore = line.error === 'repository does not exist';
                 if (!ignore) {
                     let error = new Error(`${line.error} - ${line.msg}`)
-
                     if (line.error === 'workflow is not valid') {
                         const workflowStepError = line.msg.match(/Failed to match run-step: Line: (?<line>\d+) Column (?<column>\d+): (?<msg>.*)$/)?.groups;
                         error = new Error(`Invalid steps input - ${workflowStepError?.msg ?? line.msg}`)
                     }
-
                     stagePromise.reject(error);
                     return;
                 }
@@ -137,7 +139,27 @@ export async function run(stage) {
             // actual step lines
             if (line.stepID?.[0] === stepId) {
                 if (!line.raw_output) {
-                    if (line.level === 'error') {
+                    if (line.event === 'Start') {
+                        await startStep(stepIndex);
+                    } else if (line.command) {
+                        // command files
+                        switch (line.command) {
+                            case 'set-output':
+                                stepResult.commandFiles['GITHUB_OUTPUT'][line.name] = line.arg;
+                                break;
+                            case 'set-env':
+                                stepResult.commandFiles['GITHUB_ENV'][line.name] = line.arg;
+                                break;
+                            case 'add-path':
+                                stepResult.commandFiles['GITHUB_PATH'].push(line.arg);
+                                break;
+                            default:
+                                core.warning('Unexpected command: ' + line.msg);
+                        }
+                    } else if (line.event === 'End') {
+                        stepResult.executionTime = line.executionTime;
+                        await endStep(stepIndex, line.stepResult);
+                    } else if (line.level === 'error') {
                         if (line.msg.startsWith('failed to fetch ')) {
                             const workflowStepError = line.msg.match(/GoGitActionCache (?<msg>failed to fetch \S+ with ref \S+)/)?.groups;
                             const errorMessage = workflowStepError?.msg ?? line.msg;
@@ -146,50 +168,9 @@ export async function run(stage) {
                                 buildStepIndicator(stepIndex) +
                                 '::error::' + errorMessage,
                             );
-                            DEBUG && concurrentLog(`__::Step::End::${stepIndex}`)
                             stepResult.output += '::error::' + errorMessage + EOL;
-                            await completeStep(stepIndex, 'error');
+                            await endStep(stepIndex, 'error');
                         }
-                    } else if (line.msg.startsWith(`⭐ Run ${stage} `)) {
-                        DEBUG && concurrentLog(`__::Step::Start::${stepIndex}`);
-                        concurrentLog(
-                            buildStepLogPrefix('Start') +
-                            buildStepIndicator(stepIndex) +
-                            buildStepHeadline(stage, step),
-                        );
-                    } else if (line.msg.startsWith('  ⚙  ::')) {
-                        // command files
-                        const command = line.msg.match(/^ {2}⚙ {2}::(?<type>[^:]+):: (?<parameter>.*)$/)?.groups;
-                        switch (command.type) {
-                            case 'set-output':
-                                const outputCommand = command.parameter.match(/^(?<name>[^=]+)=(?<value>.*)/)?.groups;
-                                if (!outputCommand) {
-                                    throw new Error(`Unexpected set-output command: ${line.msg}`);
-                                }
-                                stepResult.commandFiles['GITHUB_OUTPUT'][outputCommand.name] = outputCommand.value;
-                                break;
-                            case 'set-env':
-                                const envCommand = command.parameter.match(/^(?<name>[^=]+)=(?<value>.*)/)?.groups;
-                                if (!envCommand) {
-                                    throw new Error(`Unexpected set-env command: ${line.msg}`);
-                                }
-                                stepResult.commandFiles['GITHUB_ENV'][envCommand.name] = envCommand.value;
-                                break;
-                            case 'add-path':
-                                stepResult.commandFiles['GITHUB_PATH'].push(command.parameter);
-                                break;
-                            default:
-                                core.warning('Unexpected command: ' + line.msg);
-                        }
-                    } else if (line.stepResult) {
-                        stepResult.result = line.stepResult;
-                        stepResult.executionTime = line.executionTime;
-                        concurrentLog(
-                            buildStepLogPrefix('End', stepResult.result) +
-                            buildStepIndicator(stepIndex) +
-                            buildStepHeadline(stage, step, stepResult),
-                        );
-                        DEBUG && concurrentLog(`__::Step::End::${stepIndex}`)
                     }
                 } else {
                     concurrentLog(
@@ -200,18 +181,19 @@ export async function run(stage) {
                     stepResult.output += line.msg + EOL;
                 }
             } else if (line.jobResult) {
-                if (!stepResult.result && line.jobResult === 'failure') {
-                    await completeStep(stepIndex, 'error');
+                if (stepResult.status !== 'Completed') {
+                    const result = stage !== 'Post' ? 'error' : null;
+                    await endStep(stepIndex, result);
                 }
             } else if (line.raw_output) {
                 const interceptorEvent = line.msg.match(/^__::Interceptor::(?<stage>[^:]+)::(?<type>[^:]+)::(?<value>[^:]*)?/)?.groups;
                 if (interceptorEvent) {
                     if (interceptorEvent.stage !== stage) throw Error(`Unexpected stage event: ${line.msg}`);
 
-                    if (interceptorEvent.type === 'Start') {
-                        stepResult.status = 'In Progress';
-                    } else if (interceptorEvent.type === 'End') {
-                        await completeStep(stepIndex);
+                    // For some reason, you cannot rely on the act log line order for the post-stage.
+                    // Therefore, endStep is called at the end of the job (line.jobResult)
+                    if (interceptorEvent.type === 'End' && stepResult.status !== 'Completed' && stage !== 'Post') {
+                        await endStep(stepIndex);
                     }
                 }
             }
@@ -223,14 +205,44 @@ export async function run(stage) {
     await stagePromise
         .finally(() => actLogTail.quit());
 
-    async function completeStep(stepIndex, result) {
+    async function startStep(stepIndex) {
+        const step = steps[stepIndex];
         const stepResult = stepResults[stepIndex];
+        stepResult.status = 'In Progress';
+
+        concurrentLog(
+            buildStepLogPrefix('Start') +
+            buildStepIndicator(stepIndex) +
+            buildStepHeadline(stage, step),
+        );
+    }
+
+    async function endStep(stepIndex, result) {
+        const step = steps[stepIndex];
+        const stepResult = stepResults[stepIndex];
+
+        if (stepResult.status === 'Completed') {
+            throw new Error(`Unexpected step end. Step was already completed: ${stepIndex}`);
+        }
+
+        const previousStatus = stepResult.status;
         stepResult.status = 'Completed';
         if (result) {
-            stepResult.result = result;
             if (result === 'error') {
                 await fs.appendFile(errorStepsFilePath, stepIndex + EOL);
+            } else if (previousStatus === 'Queued') {
+                throw new Error(`Unexpected step result. Step was not running: ${stepIndex}`);
             }
+            stepResult.result = result;
+
+        }
+
+        if (previousStatus === 'In Progress') {
+            concurrentLog(
+                buildStepLogPrefix('End', stepResult.result) +
+                buildStepIndicator(stepIndex) +
+                buildStepHeadline(stage, step, stepResult),
+            );
         }
 
         // check if the stage has been completed
@@ -238,6 +250,7 @@ export async function run(stage) {
             if (concurrentLogGroupOpen) {
                 core.endGroup();
             }
+            DEBUG && console.log(colorizePurple(`__::Action::${stage}::End::`));
 
             stepResults.forEach((stepResult, stepIndex) => {
                 const step = steps[stepIndex];
@@ -276,8 +289,6 @@ export async function run(stage) {
                     });
             });
 
-            DEBUG && console.log(`__::Action::${stage}::End::`);
-
             // complete stage promise
             if (stepResults.every((result) => !result.result || result.result === 'success')) {
                 stagePromise.resolve();
@@ -295,12 +306,24 @@ async function startAct(steps, githubToken, logFilePath) {
         env: {...process.env, GH_TOKEN: githubToken}
     });
 
-    const GITHUB_EVENT_PATH = process.env["GITHUB_EVENT_PATH"];
-    const GITHUB_ACTOR = process.env["GITHUB_ACTOR"];
-    const WORKING_DIRECTORY = process.cwd();
+    const ACTION_ENV =Object.fromEntries(Object.entries(process.env)
+        .filter(([key]) => {
+            return (key.startsWith('GITHUB_') || key.startsWith('RUNNER_'))
+                && ![
+                    'GITHUB_WORKSPACE',
+                    // command files
+                    'GITHUB_OUTPUT',
+                    'GITHUB_ENV',
+                    'GITHUB_PATH',
+                    'GITHUB_STEP_SUMMARY',
+                    'GITHUB_STATE',
+                ].includes(key);
+        }));
+
+    console.log(colorizeRed("GITHUB_ACTION:", process.env["GITHUB_ACTION"]))
 
     const workflow = {
-        on: "workflow_dispatch",
+        on: process.env["GITHUB_EVENT_NAME"],
         jobs: {},
     }
     for (const [stepIndex, step] of Object.entries(steps)) {
@@ -313,7 +336,8 @@ async function startAct(steps, githubToken, logFilePath) {
                     with: {
                         'step': 'Pre',
                         'temp-dir': ACTION_STEP_TEMP_DIR,
-                        'host-working-directory': WORKING_DIRECTORY,
+                        'host-working-directory': process.cwd(),
+                        'host-env': JSON.stringify(ACTION_ENV),
                     }
                 },
                 step,
@@ -338,9 +362,15 @@ async function startAct(steps, githubToken, logFilePath) {
             "--bind", // do not copy working directory files
             "--platform", "host=-self-hosted",
             "--local-repository", "__/act-interceptor@local" + "=" + `${__dirname}/act-interceptor`,
-            GITHUB_EVENT_PATH ? ["--eventpath", GITHUB_EVENT_PATH] : [],
-            GITHUB_ACTOR ? ["--actor", GITHUB_ACTOR] : [],
+            "--eventpath", process.env["GITHUB_EVENT_PATH"],
+            "--actor", process.env["GITHUB_ACTOR"],
             "--secret", `GITHUB_TOKEN=${githubToken}`,
+
+            // TODO
+            ...Object.entries(ACTION_ENV)
+                .map(([key, value]) => ['--env', `${key}=${value}`])
+                .flat(),
+
             "--action-offline-mode",
             "--json",
         ].flat(),
@@ -350,6 +380,7 @@ async function startAct(steps, githubToken, logFilePath) {
             env: {...process.env, GH_TOKEN: githubToken},
         }
     ).unref();
+
 }
 
 // --- Utility functions ---
@@ -398,10 +429,28 @@ function parseActLine(line) {
         }
     }
 
-    result.msg = result.msg.trimEnd();
-
     // normalize level to github core log levels
     if (result.level === 'warn') result.level = 'warning';
+
+    result.msg = result.msg.trimEnd();
+
+    if (!result.raw_output) {
+        if (result.msg.startsWith('⭐ Run ')) {
+            result.event = 'Start';
+        } else if (result.stepResult || result.jobResult) {
+            result.event = 'End';
+        } else if (result.msg.startsWith('  ⚙  ::')) {
+            // command files
+            const command = result.msg.match(/^ {2}⚙ {2}::(?<command>[^:]+)::\s+(?:(?<name>\w+)=)?(?<arg>.*)$/).groups;
+            if (!command) {
+                throw new Error(`Unexpected command line: ${line.msg}`);
+            }
+            result.command = command.command;
+            result.name = command.name;
+            result.arg = command.arg;
+            // TODO summary
+        }
+    }
 
     return result;
 }
