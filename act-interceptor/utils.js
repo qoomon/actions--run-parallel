@@ -65,6 +65,12 @@ export function colorizeYellow(value) {
         .join('\n');
 }
 
+export function colorizePurple(value) {
+    return value.split("\n")
+        .map((line) => `\x1b[1;35m${line}\x1b[0m`)
+        .join('\n');
+}
+
 export class CompletablePromise extends Promise {
     status = 'pending';
 
