@@ -1,6 +1,6 @@
 import core from '@actions/core';
 import {LOCAL, untilFilePresent} from "./utils.js";
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 
 const step = core.getInput('step', {required: true});
@@ -10,8 +10,8 @@ if (step === 'Pre') {
     if (!LOCAL) {
         // --- Link job working directory to host working directory
         const jobWorkingDirectory = process.cwd();
-        fs.rmSync(jobWorkingDirectory, {recursive: true});
-        fs.symlinkSync(hostWorkingDirectory, jobWorkingDirectory);
+        await fs.rm(jobWorkingDirectory, {recursive: true});
+        await fs.symlink(hostWorkingDirectory, jobWorkingDirectory);
     }
 
     const stage = 'Pre';

@@ -88,7 +88,3 @@ export class CompletablePromise extends Promise {
         }
     }
 }
-
-export async function runAsync(fn) {
-    await fn()
-}

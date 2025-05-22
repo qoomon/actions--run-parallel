@@ -1,5 +1,5 @@
 import child_process from "node:child_process";
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import YAML from "yaml";
 import path from "node:path";
 import {fileURLToPath} from "url";
@@ -65,7 +65,7 @@ export async function run(stage) {
 
     if (stage === 'Pre') {
         await startAct(steps, githubToken, actLogFilePath);
-        fs.appendFileSync(errorStepsFilePath, ''); // ensure the file does exist
+        await fs.appendFile(errorStepsFilePath, ''); // ensure the file does exist
     }
 
     const stepResults = steps.map(() => ({
@@ -80,8 +80,12 @@ export async function run(stage) {
             'GITHUB_STEP_SUMMARY': '',
         },
     }));
-    fs.readFileSync(errorStepsFilePath).toString().split('\n').filter((line) => !!line)
-        .forEach((stepIndex) => completeStep(stepIndex, 'error'));
+    await fs.readFile(errorStepsFilePath).then(async (buffer) => {
+        const errorSteps = buffer.toString().split('\n').filter((line) => !!line);
+        for (const stepIndex of errorSteps) {
+            await completeStep(stepIndex, 'error');
+        }
+    })
 
     let concurrentLogGroupOpen = false
 
@@ -139,7 +143,7 @@ export async function run(stage) {
                             );
                             DEBUG && concurrentLog(`__::Step::End::${stepIndex}`)
                             stepResult.output += '::error::' + errorMessage + EOL;
-                            completeStep(stepIndex, 'error');
+                            await completeStep(stepIndex, 'error');
                         }
                     } else if (line.msg.startsWith(`⭐ Run ${stage} `)) {
                         DEBUG && concurrentLog(`__::Step::Start::${stepIndex}`);
@@ -192,7 +196,7 @@ export async function run(stage) {
                 }
             } else if (line.jobResult) {
                 if (!stepResult.result && line.jobResult === 'failure') {
-                    completeStep(stepIndex, 'error');
+                    await completeStep(stepIndex, 'error');
                 }
             } else if (line.raw_output) {
                 const interceptorEvent = line.msg.match(/^__::Interceptor::(?<stage>[^:]+)::(?<type>[^:]+)::(?<value>[^:]*)?/)?.groups;
@@ -202,25 +206,25 @@ export async function run(stage) {
                     if (interceptorEvent.type === 'Start') {
                         stepResult.status = 'In Progress';
                     } else if (interceptorEvent.type === 'End') {
-                        completeStep(stepIndex);
+                        await completeStep(stepIndex);
                     }
                 }
             }
         });
 
     // --- create the trigger file to signal step runner to start the next stage
-    fs.writeFileSync(path.join(ACTION_STEP_TEMP_DIR, `.Interceptor-${stage}-Stage`), '');
+    await fs.writeFile(path.join(ACTION_STEP_TEMP_DIR, `.Interceptor-${stage}-Stage`), '');
 
     await stagePromise
         .finally(() => actLogTail.quit());
 
-    function completeStep(stepIndex, result) {
+    async function completeStep(stepIndex, result) {
         const stepResult = stepResults[stepIndex];
         stepResult.status = 'Completed';
         if (result) {
             stepResult.result = result;
             if (result === 'error') {
-                fs.appendFileSync(errorStepsFilePath, stepIndex + EOL);
+                await fs.appendFile(errorStepsFilePath, stepIndex + EOL);
             }
         }
 
@@ -321,10 +325,9 @@ async function startAct(steps, githubToken, logFilePath) {
     }
 
     const workflowFilePath = path.join(ACTION_STEP_TEMP_DIR, 'steps-workflow.yaml');
-    fs.writeFileSync(workflowFilePath, YAML.stringify(workflow));
+    await fs.writeFile(workflowFilePath, YAML.stringify(workflow));
 
-    fs.writeFileSync(logFilePath, ''); // ensure the file does exist
-    const actLogFileDescriptor = fs.openSync(logFilePath, 'w');
+    const actLogFile = await fs.open(logFilePath, 'w');
     child_process.spawn(
         "gh", ["act", "--workflows", workflowFilePath,
             "--bind", // do not copy working directory files
@@ -338,7 +341,7 @@ async function startAct(steps, githubToken, logFilePath) {
         ].flat(),
         {
             detached: true,
-            stdio: ['ignore', actLogFileDescriptor, actLogFileDescriptor],
+            stdio: ['ignore', actLogFile, actLogFile],
             env: {...process.env, GH_TOKEN: githubToken},
         }
     ).unref();
