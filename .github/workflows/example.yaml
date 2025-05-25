@@ -12,13 +12,19 @@ jobs:
         with:
           steps: |
             - run: "echo GITHUB_ACTION=$GITHUB_ACTION"
-            - uses: actions/checkout@v4
+            - run: | 
+                echo "::group::xxx"
+                echo GITHUB_ACTION=$GITHUB_ACTION
+                echo "::endgroup::"
+            - uses: qoomon/actions--parallel-steps@main
+              with:
+                steps: |
+                  - run: "echo GITHUB_ACTION=$GITHUB_ACTION"
+                  - run: "echo GITHUB_ACTION=$GITHUB_ACTION"
             - uses: actions/setup-java@v4
               with:
                 distribution: 'temurin' # See 'Supported distributions' for available options
                 java-version: '21'
-      - run: ls -lachs
-
 #          steps: |
 #            - run: |
 #                echo Step0
@@ -38,9 +44,7 @@ jobs:
 #                  core.exportVariable('TEST_VARIABLE', 'Step2')
 #                  core.addPath('./test-path')
 #                  await core.summary.addHeading('Step2').write()
-
-      - run: |
-          ls -lachs
-          echo TEST_VARIABLE: $TEST_VARIABLE
-          echo test-output: ${{ steps.parallel.outputs.test-output }}
+#          ls -lachs
+#          echo TEST_VARIABLE: $TEST_VARIABLE
+#          echo test-output: ${{ steps.parallel.outputs.test-output }}
 

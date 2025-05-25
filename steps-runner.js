@@ -7,6 +7,7 @@ import os from 'os';
 import readline from "node:readline";
 import {
     ACTION_STEP_TEMP_DIR,
+    colorizeBlue,
     colorizeCyan,
     colorizeGray,
     colorizePurple,
@@ -24,6 +25,20 @@ const __dirname = path.dirname(__filename);
 
 const actLogFilePath = path.join(ACTION_STEP_TEMP_DIR, 'act.log');
 const errorStepsFilePath = path.join(ACTION_STEP_TEMP_DIR, '.error-steps');
+
+const ACTION_ENV = Object.fromEntries(Object.entries(process.env).filter(([key]) => {
+        return (key.startsWith('GITHUB_') || key.startsWith('RUNNER_'))
+            && ![
+                'RUNNER_TEMP', // TODO
+                'GITHUB_WORKSPACE',
+                // command files
+                'GITHUB_OUTPUT',
+                'GITHUB_ENV',
+                'GITHUB_PATH',
+                'GITHUB_STEP_SUMMARY',
+                'GITHUB_STATE',
+            ].includes(key);
+    }));
 
 export async function run(stage) {
     const githubToken = core.getInput("token", {required: true});
@@ -67,11 +82,16 @@ export async function run(stage) {
     });
 
     const stagePromise = new CompletablePromise();
-    DEBUG && console.log(colorizePurple(`__::Action::${stage}::Start::`));
+    DEBUG && console.log(colorizePurple(`__::Act::${stage}::Start::`));
 
     if (stage === 'Pre') {
-        await startAct(steps, githubToken, actLogFilePath);
+        const actPid = await startAct(steps, githubToken, actLogFilePath);
+        core.saveState("act-pid", actPid);
         await fs.appendFile(errorStepsFilePath, ''); // ensure the file does exist
+    } else if (stage === 'Post') {
+        if(!core.getState("act-pid")) {
+            return;
+        }
     }
 
     const stepResults = steps.map(() => ({
@@ -139,7 +159,17 @@ export async function run(stage) {
             // actual step lines
             if (line.stepID?.[0] === stepId) {
                 if (!line.raw_output) {
-                    if (line.event === 'Start') {
+                    if(line.msg.trimEnd().startsWith("  ❓  ::group::")
+                    || line.msg.trimEnd().startsWith("  ❓  ::endgroup::")) {
+                        const msg = '​' + line.msg.trimEnd()
+                            .replace(/^ {2}❓ {2}/, '');
+                        concurrentLog(
+                            buildStepLogPrefix() +
+                            buildStepIndicator(stepIndex) +
+                            msg,
+                        );
+                        stepResult.output += msg + EOL;
+                    } else if (line.event === 'Start') {
                         await startStep(stepIndex);
                     } else if (line.command) {
                         // command files
@@ -158,7 +188,8 @@ export async function run(stage) {
                         }
                     } else if (line.event === 'End') {
                         stepResult.executionTime = line.executionTime;
-                        await endStep(stepIndex, line.stepResult);
+                        stepResult.result = line.stepResult;
+                        // endStep(...) is called at __::interceptor:: end event
                     } else if (line.level === 'error') {
                         if (line.msg.startsWith('failed to fetch ')) {
                             const workflowStepError = line.msg.match(/GoGitActionCache (?<msg>failed to fetch \S+ with ref \S+)/)?.groups;
@@ -180,21 +211,19 @@ export async function run(stage) {
                     );
                     stepResult.output += line.msg + EOL;
                 }
+            } else if (line.raw_output) {
+                const interceptorEvent = line.msg.match(/^__::Interceptor::(?<stage>[^:]+)::(?<type>[^:]+)::(?<value>[^:]*)?/)?.groups;
+                if (interceptorEvent) {
+                    // For some reason, you cannot rely on the act log line order for the post-stage.
+                    // Therefore, endStep is called at the end of the job (line.jobResult, see below)
+                    if (interceptorEvent.type === 'End' && stage !== 'Post') {
+                        await endStep(stepIndex);
+                    }
+                }
             } else if (line.jobResult) {
                 if (stepResult.status !== 'Completed') {
                     const result = stage !== 'Post' ? 'error' : null;
                     await endStep(stepIndex, result);
-                }
-            } else if (line.raw_output) {
-                const interceptorEvent = line.msg.match(/^__::Interceptor::(?<stage>[^:]+)::(?<type>[^:]+)::(?<value>[^:]*)?/)?.groups;
-                if (interceptorEvent) {
-                    if (interceptorEvent.stage !== stage) throw Error(`Unexpected stage event: ${line.msg}`);
-
-                    // For some reason, you cannot rely on the act log line order for the post-stage.
-                    // Therefore, endStep is called at the end of the job (line.jobResult)
-                    if (interceptorEvent.type === 'End' && stepResult.status !== 'Completed' && stage !== 'Post') {
-                        await endStep(stepIndex);
-                    }
                 }
             }
         });
@@ -204,12 +233,23 @@ export async function run(stage) {
 
     await stagePromise
         .finally(() => actLogTail.quit());
+    if (stage === 'Post') {
+        const actPid = parseInt(core.getState('act-pid'));
+        try {
+            process.kill(actPid)
+        } catch (error) {
+        }
+    }
 
     async function startStep(stepIndex) {
         const step = steps[stepIndex];
         const stepResult = stepResults[stepIndex];
         stepResult.status = 'In Progress';
 
+        DEBUG && console.log(buildStepLogPrefix() +
+            buildStepIndicator(stepIndex) +
+            colorizeBlue(`__::Step::${stage}::Start::`)
+        );
         concurrentLog(
             buildStepLogPrefix('Start') +
             buildStepIndicator(stepIndex) +
@@ -243,6 +283,10 @@ export async function run(stage) {
                 buildStepIndicator(stepIndex) +
                 buildStepHeadline(stage, step, stepResult),
             );
+            DEBUG && console.log(buildStepLogPrefix() +
+                buildStepIndicator(stepIndex) +
+                colorizeBlue(`__::Step::${stage}::End::`)
+            );
         }
 
         // check if the stage has been completed
@@ -250,7 +294,7 @@ export async function run(stage) {
             if (concurrentLogGroupOpen) {
                 core.endGroup();
             }
-            DEBUG && console.log(colorizePurple(`__::Action::${stage}::End::`));
+            DEBUG && console.log(colorizePurple(`__::Act::${stage}::End::`));
 
             stepResults.forEach((stepResult, stepIndex) => {
                 const step = steps[stepIndex];
@@ -300,64 +344,51 @@ export async function run(stage) {
 }
 
 async function startAct(steps, githubToken, logFilePath) {
-    // Install gh-act extension
-    child_process.execSync("gh extension install https://github.com/nektos/gh-act", {
-        stdio: 'inherit',
-        env: {...process.env, GH_TOKEN: githubToken}
-    });
-
-    const ACTION_ENV =Object.fromEntries(Object.entries(process.env)
-        .filter(([key]) => {
-            return (key.startsWith('GITHUB_') || key.startsWith('RUNNER_'))
-                && ![
-                    'GITHUB_WORKSPACE',
-                    // command files
-                    'GITHUB_OUTPUT',
-                    'GITHUB_ENV',
-                    'GITHUB_PATH',
-                    'GITHUB_STEP_SUMMARY',
-                    'GITHUB_STATE',
-                ].includes(key);
-        }));
-
-    console.log(colorizeRed("GITHUB_ACTION:", process.env["GITHUB_ACTION"]))
-
     const workflow = {
         on: process.env["GITHUB_EVENT_NAME"],
-        jobs: {},
-    }
-    for (const [stepIndex, step] of Object.entries(steps)) {
-        const jobId = `Step${stepIndex}`;
-        workflow.jobs[jobId] = {
-            "runs-on": "host", // refers to gh act parameter "--platform", "host=-self-hosted",
-            "steps": [
-                {
-                    uses: "__/act-interceptor@local",
-                    with: {
-                        'step': 'Pre',
-                        'temp-dir': ACTION_STEP_TEMP_DIR,
-                        'host-working-directory': process.cwd(),
-                        'host-env': JSON.stringify(ACTION_ENV),
-                    }
-                },
-                step,
-                {
-                    if: "always()",
-                    uses: "__/act-interceptor@local",
-                    with: {
-                        'step': 'Post',
-                        'temp-dir': ACTION_STEP_TEMP_DIR,
-                    }
-                },
-            ],
-        };
+        jobs: Object.assign({}, ...Object.entries(steps)
+            // Make a deep copy of the step to avoid modifying the input steps
+            .map(([stepIndex, step]) => [stepIndex, JSON.parse(JSON.stringify(step))])
+            .map(([stepIndex, step]) => ({
+                [`Step${stepIndex}`]: {
+                    "runs-on": "host", // refers to gh act parameter "--platform", "host=-self-hosted",
+                    "steps": [
+                        {
+                            uses: "__/act-interceptor@local",
+                            with: {
+                                'step': 'Pre',
+                                'temp-dir': ACTION_STEP_TEMP_DIR,
+                                'host-working-directory': process.cwd(),
+                                'host-env': JSON.stringify(ACTION_ENV),
+                            },
+                        },
+                        Object.assign(step, {
+                            env: Object.assign(step.env ?? {}, {
+                                // WORKAROUND
+                                // GITHUB_ACTION cant be overwritten by act --env nor by core.exportVariable of the interceptor pre-step,
+                                // therefore a workaround we need to set it as an environment variable of the step itself.
+                                "GITHUB_ACTION": (process.env["X_GITHUB_ACTION"] ?? process.env["GITHUB_ACTION"]) + `__step_${stepIndex}`,
+                                "X_GITHUB_ACTION": (process.env["X_GITHUB_ACTION"] ?? process.env["GITHUB_ACTION"]) + `__step_${stepIndex}`,
+                            }),
+                        }),
+                        {
+                            if: "always()",
+                            uses: "__/act-interceptor@local",
+                            with: {
+                                'step': 'Post',
+                                'temp-dir': ACTION_STEP_TEMP_DIR,
+                            },
+                        },
+                    ],
+                }
+            }))),
     }
 
     const workflowFilePath = path.join(ACTION_STEP_TEMP_DIR, 'steps-workflow.yaml');
     await fs.writeFile(workflowFilePath, YAML.stringify(workflow));
 
     const actLogFile = await fs.open(logFilePath, 'w');
-    child_process.spawn(
+    const actProcess = child_process.spawn(
         "gh", ["act", "--workflows", workflowFilePath,
             "--bind", // do not copy working directory files
             "--platform", "host=-self-hosted",
@@ -366,7 +397,7 @@ async function startAct(steps, githubToken, logFilePath) {
             "--actor", process.env["GITHUB_ACTOR"],
             "--secret", `GITHUB_TOKEN=${githubToken}`,
 
-            // TODO
+            // TODO chek if needed
             ...Object.entries(ACTION_ENV)
                 .map(([key, value]) => ['--env', `${key}=${value}`])
                 .flat(),
@@ -378,8 +409,10 @@ async function startAct(steps, githubToken, logFilePath) {
             detached: true,
             stdio: ['ignore', actLogFile, actLogFile],
             env: {...process.env, GH_TOKEN: githubToken},
-        }
-    ).unref();
+        },
+    );
+    actProcess.unref()
+    return actProcess.pid;
 
 }
 

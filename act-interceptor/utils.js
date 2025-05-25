@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const DEBUG = process.env["RUNNER_DEBUG"];
 export const TRACE = process.env["RUNNER_DEBUG"] === "2";
+export const DEBUG = process.env["RUNNER_DEBUG"] === "1" || TRACE;
 export const LOCAL = process.env["RUNNER_LOCAL"] === "1";
 
-export const ACTION_STEP_TEMP_DIR = `${process.env["RUNNER_TEMP"]}/${process.env["GITHUB_ACTION"]}`;
+export const ACTION_STEP_TEMP_DIR = `${process.env["RUNNER_TEMP"]}/${process.env["X_GITHUB_ACTION"] ?? process.env["GITHUB_ACTION"]}`;
 {
     if (!process.env["RUNNER_TEMP"] || !process.env["GITHUB_ACTION"]) {
         throw new Error("RUNNER_TEMP and GITHUB_ACTION environment variables are required "
@@ -70,6 +70,11 @@ export function colorizePurple(value) {
         .map((line) => `\x1b[1;35m${line}\x1b[0m`)
         .join('\n');
 }
+export function colorizeBlue(value) {
+    return value.split("\n")
+        .map((line) => `\x1b[1;34m${line}\x1b[0m`)
+        .join('\n');
+}
 
 export class CompletablePromise extends Promise {
     status = 'pending';
@@ -92,5 +97,13 @@ export class CompletablePromise extends Promise {
             this.status = 'rejected';
             _reject(reason);
         }
+    }
+}
+
+export function isRunning(pid) {
+    try {
+        return process.kill(pid, 0)
+    } catch (e) {
+        return e.code === 'EPERM'
     }
 }
