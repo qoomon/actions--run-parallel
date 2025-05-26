@@ -1,7 +1,6 @@
 import core from "@actions/core";
 import {untilFilePresent} from "./utils.js";
 import path from "node:path";
-import fs from "node:fs/promises";
 
 const step = core.getInput('step', {required: true});
 const tempDir = core.getInput("temp-dir", {required: true});

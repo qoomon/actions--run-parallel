@@ -11,40 +11,32 @@ jobs:
         id: parallel-steps
         with:
           steps: |
-            - run: "echo GITHUB_ACTION=$GITHUB_ACTION"
             - run: | 
                 echo "::group::xxx"
                 echo GITHUB_ACTION=$GITHUB_ACTION
                 echo "::endgroup::"
-            - uses: qoomon/actions--parallel-steps@main
+            - uses: actions/checkout@v4
+            - name : Test File Creation
+              run: |
+                echo Step1
+                echo Step1 > test-file.txt
+            - name : Test Command Files
+              id: command-file
+              uses: actions/github-script@v7
               with:
-                steps: |
-                  - run: "echo GITHUB_ACTION=$GITHUB_ACTION"
-                  - run: "echo GITHUB_ACTION=$GITHUB_ACTION"
-            - uses: actions/setup-java@v4
-              with:
-                distribution: 'temurin' # See 'Supported distributions' for available options
-                java-version: '21'
-#          steps: |
-#            - run: |
-#                echo Step0
-#
-#            - name : Test File Creation
-#              run: |
-#                echo Step1
-#                echo Step1 > test-file.txt
-#
-#            - name : Test Command Files
-#              id: step2
-#              uses: actions/github-script@v7
-#              with:
-#                script: |
-#                  console.log('Step2')
-#                  core.setOutput('test-output', 'Step2')
-#                  core.exportVariable('TEST_VARIABLE', 'Step2')
-#                  core.addPath('./test-path')
-#                  await core.summary.addHeading('Step2').write()
-#          ls -lachs
-#          echo TEST_VARIABLE: $TEST_VARIABLE
-#          echo test-output: ${{ steps.parallel.outputs.test-output }}
+                script: |
+                  core.exportVariable('TEST_VARIABLE', 'AAA')
+                  core.setOutput('test-output', 'BBB')
+                  core.addPath('./test-command')
+      #            - uses: actions/setup-java@v4
+      #              with:
+      #                distribution: 'temurin' # See 'Supported distributions' for available options
+      #                java-version: '21'
+      - run: |
+          ls -lachs
+          echo "TEST_VARIABLE:                                         $TEST_VARIABLE"
+          echo "steps.parallel-steps.outputs.test-output:              ${{ steps.parallel-steps.outputs.test-output }}"
+          echo "steps.parallel-steps.outputs.command-file.test-output: ${{ steps.parallel-steps.outputs.command-file-test-output }}"
+          
+            
 

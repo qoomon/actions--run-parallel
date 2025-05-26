@@ -27,18 +27,18 @@ const actLogFilePath = path.join(ACTION_STEP_TEMP_DIR, 'act.log');
 const errorStepsFilePath = path.join(ACTION_STEP_TEMP_DIR, '.error-steps');
 
 const ACTION_ENV = Object.fromEntries(Object.entries(process.env).filter(([key]) => {
-        return (key.startsWith('GITHUB_') || key.startsWith('RUNNER_'))
-            && ![
-                'RUNNER_TEMP', // TODO
-                'GITHUB_WORKSPACE',
-                // command files
-                'GITHUB_OUTPUT',
-                'GITHUB_ENV',
-                'GITHUB_PATH',
-                'GITHUB_STEP_SUMMARY',
-                'GITHUB_STATE',
-            ].includes(key);
-    }));
+    return (key.startsWith('GITHUB_') || key.startsWith('RUNNER_'))
+        && ![
+            'RUNNER_TEMP', // TODO
+            'GITHUB_WORKSPACE',
+            // command files
+            'GITHUB_OUTPUT',
+            'GITHUB_ENV',
+            'GITHUB_PATH',
+            'GITHUB_STEP_SUMMARY',
+            'GITHUB_STATE',
+        ].includes(key);
+}));
 
 export async function run(stage) {
     const githubToken = core.getInput("token", {required: true});
@@ -85,13 +85,8 @@ export async function run(stage) {
     DEBUG && console.log(colorizePurple(`__::Act::${stage}::Start::`));
 
     if (stage === 'Pre') {
-        const actPid = await startAct(steps, githubToken, actLogFilePath);
-        core.saveState("act-pid", actPid);
+        await startAct(steps, githubToken, actLogFilePath);
         await fs.appendFile(errorStepsFilePath, ''); // ensure the file does exist
-    } else if (stage === 'Post') {
-        if(!core.getState("act-pid")) {
-            return;
-        }
     }
 
     const stepResults = steps.map(() => ({
@@ -159,8 +154,8 @@ export async function run(stage) {
             // actual step lines
             if (line.stepID?.[0] === stepId) {
                 if (!line.raw_output) {
-                    if(line.msg.trimEnd().startsWith("  ❓  ::group::")
-                    || line.msg.trimEnd().startsWith("  ❓  ::endgroup::")) {
+                    if (line.msg.trimEnd().startsWith("  ❓  ::group::")
+                        || line.msg.trimEnd().startsWith("  ❓  ::endgroup::")) {
                         const msg = '​' + line.msg.trimEnd()
                             .replace(/^ {2}❓ {2}/, '');
                         concurrentLog(
@@ -311,30 +306,27 @@ export async function run(stage) {
                 }
 
                 // command files
-                Object.entries(stepResult.commandFiles['GITHUB_OUTPUT'])
-                    .forEach(([key, value]) => {
-                        DEBUG && console.log(`Set output: ${key}=${value}`);
-                        core.setOutput(key, value);
-                        if (step.id) {
-                            const stepKey = step.id + '-' + key;
-                            DEBUG && console.log(`Set output: ${stepKey}=${value}`);
-                            core.setOutput(stepKey, value);
-                        }
-                    });
-                Object.entries(stepResult.commandFiles['GITHUB_ENV'])
-                    .forEach(([key, value]) => {
-                        DEBUG && console.log(`Export variable: ${key}=${value}`);
-                        core.exportVariable(key, value);
-                    });
-                stepResult.commandFiles['GITHUB_PATH']
-                    .forEach((path) => {
-                        DEBUG && console.log(`Add path: ${path}`);
-                        core.addPath(path);
-                    });
+                Object.entries(stepResult.commandFiles['GITHUB_OUTPUT']).forEach(([key, value]) => {
+                    DEBUG && console.log(`Set output: ${key}=${value}`);
+                    core.setOutput(key, value);
+                    if (step.id) {
+                        const stepKey = step.id + '-' + key;
+                        DEBUG && console.log(`Set output: ${stepKey}=${value}`);
+                        core.setOutput(stepKey, value);
+                    }
+                });
+                Object.entries(stepResult.commandFiles['GITHUB_ENV']).forEach(([key, value]) => {
+                    DEBUG && console.log(`Export variable: ${key}=${value}`);
+                    core.exportVariable(key, value);
+                });
+                stepResult.commandFiles['GITHUB_PATH'].forEach((path) => {
+                    DEBUG && console.log(`Add path: ${path}`);
+                    core.addPath(path);
+                });
             });
 
             // complete stage promise
-            if (stepResults.every((result) => !result.result || result.result === 'success')) {
+            if (stepResults.every((result) => result.result === 'success' || !result.result)) {
                 stagePromise.resolve();
             } else {
                 stagePromise.reject();
@@ -411,9 +403,9 @@ async function startAct(steps, githubToken, logFilePath) {
             env: {...process.env, GH_TOKEN: githubToken},
         },
     );
-    actProcess.unref()
+    actProcess.unref();
+    await actLogFile.close();
     return actProcess.pid;
-
 }
 
 // --- Utility functions ---
@@ -474,14 +466,14 @@ function parseActLine(line) {
             result.event = 'End';
         } else if (result.msg.startsWith('  ⚙  ::')) {
             // command files
-            const command = result.msg.match(/^ {2}⚙ {2}::(?<command>[^:]+)::\s+(?:(?<name>\w+)=)?(?<arg>.*)$/).groups;
+            const command = result.msg.match(/^ {2}⚙ {2}::(?<command>[^:]+)::\s*(?:(?<name>[\w-]+)=)?(?<arg>.*)$/).groups;
             if (!command) {
                 throw new Error(`Unexpected command line: ${line.msg}`);
             }
             result.command = command.command;
             result.name = command.name;
             result.arg = command.arg;
-            // TODO summary
+            // TODO step-summary
         }
     }
 

@@ -70,6 +70,7 @@ export function colorizePurple(value) {
         .map((line) => `\x1b[1;35m${line}\x1b[0m`)
         .join('\n');
 }
+
 export function colorizeBlue(value) {
     return value.split("\n")
         .map((line) => `\x1b[1;34m${line}\x1b[0m`)
