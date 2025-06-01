@@ -382,6 +382,7 @@ async function startAct(steps, githubToken, logFilePath) {
     const actLogFile = await fs.open(logFilePath, 'w');
     const actProcess = child_process.spawn(
         "gh", ["act", "--workflows", workflowFilePath,
+            "--concurrent-jobs", steps.length,
             "--bind", // do not copy working directory files
             "--platform", "host=-self-hosted",
             "--local-repository", "__/act-interceptor@local" + "=" + `${__dirname}/act-interceptor`,
