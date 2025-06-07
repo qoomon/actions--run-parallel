@@ -36,7 +36,8 @@ jobs:
 https://github.com/qoomon/actions--parallel-steps/actions/workflows/example.yaml
 
 ## Known Issues
-- So far `act` doesn't implement support for `GITHUB_STEP_SUMMARY` (https://github.com/nektos/act/issues/2759)
+- So far `act` doesn't implement support for `GITHUB_STEP_SUMMARY`
+  - Summary support has been merged already https://github.com/nektos/act/issues/2759. As soon as next act version has be released this action will be updated to support step summaries as well
 
 ## Development
 
