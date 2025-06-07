@@ -40,6 +40,8 @@ const ACTION_ENV = Object.fromEntries(Object.entries(process.env).filter(([key])
         ].includes(key);
 }));
 
+export const GH_ACT_VERSION = '0.2.79';
+
 export async function run(stage) {
     const githubToken = core.getInput("token", {required: true});
     const steps = getInput("steps", {required: true}, (value) => {
@@ -87,6 +89,14 @@ export async function run(stage) {
     if (stage === 'Pre') {
         await startAct(steps, githubToken, actLogFilePath);
         await fs.appendFile(errorStepsFilePath, ''); // ensure the file does exist
+    } else if (stage === 'Post') {
+        // check if errorStepsFilePath exists, if not skip the post stage
+        const errorStepsFileExist = await fs.access(errorStepsFilePath)
+            .then(() => true).catch(() => false);
+        if( !errorStepsFileExist) {
+            DEBUG && console.log(colorizePurple(`__::Act::${stage}::End::`));
+            return;
+        }
     }
 
     const stepResults = steps.map(() => ({
@@ -98,7 +108,7 @@ export async function run(stage) {
             'GITHUB_OUTPUT': {},
             'GITHUB_ENV': {},
             'GITHUB_PATH': [],
-            'GITHUB_STEP_SUMMARY': '',
+            'GITHUB_STEP_SUMMARY': [],
         },
     }));
     await fs.readFile(errorStepsFilePath).then(async (buffer) => {
@@ -177,6 +187,9 @@ export async function run(stage) {
                                 break;
                             case 'add-path':
                                 stepResult.commandFiles['GITHUB_PATH'].push(line.arg);
+                                break;
+                            case 'summary':
+                                stepResult.commandFiles['GITHUB_STEP_SUMMARY'].push(line.content);
                                 break;
                             default:
                                 core.warning('Unexpected command: ' + line.msg);
@@ -323,6 +336,10 @@ export async function run(stage) {
                     DEBUG && console.log(`Add path: ${path}`);
                     core.addPath(path);
                 });
+                stepResult.commandFiles['GITHUB_STEP_SUMMARY'].forEach((summary) => {
+                    DEBUG && console.log(`Step summary: ${summary}`);
+                    core.summary.addRaw(summary, true);
+                });
             });
 
             // complete stage promise
@@ -465,16 +482,6 @@ function parseActLine(line) {
             result.event = 'Start';
         } else if (result.stepResult || result.jobResult) {
             result.event = 'End';
-        } else if (result.msg.startsWith('  ⚙  ::')) {
-            // command files
-            const command = result.msg.match(/^ {2}⚙ {2}::(?<command>[^:]+)::\s*(?:(?<name>[\w-]+)=)?(?<arg>.*)$/).groups;
-            if (!command) {
-                throw new Error(`Unexpected command line: ${line.msg}`);
-            }
-            result.command = command.command;
-            result.name = command.name;
-            result.arg = command.arg;
-            // TODO step-summary
         }
     }
 
