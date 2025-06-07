@@ -1,14 +1,6 @@
 # Parallel Steps &nbsp; [![Actions](https://img.shields.io/badge/qoomon-GitHub%20Actions-blue)](https://github.com/qoomon/actions)
 
-With this action, you can run parallel steps in a GitHub Actions workflow jobs.
-
-Under the hood, this action uses [act](https://github.com/nektos/act).
-
-> [!Note]
-> The pre-actions of the parallel steps will be executed as part of the main action of this action.
-
-## Known Issues
-- So far `act` doesn't implement support for `GITHUB_STEP_SUMMARY` (https://github.com/nektos/act/issues/2759)
+With this action, you can run parallel steps in a GitHub Actions workflow jobs. Under the hood, this action uses [act](https://github.com/nektos/act).
 
 ## Usage
 
@@ -37,9 +29,14 @@ jobs:
           RECIPIENT: ${{ steps.parallel-steps.outputs.greetings-recipient }}
 ```
 
-## Workflow Run Examples
+> [!Note]
+> The pre-actions of the parallel steps will be executed as part of the main action of this action.
 
+## Workflow Run Examples
 https://github.com/qoomon/actions--parallel-steps/actions/workflows/example.yaml
+
+## Known Issues
+- So far `act` doesn't implement support for `GITHUB_STEP_SUMMARY` (https://github.com/nektos/act/issues/2759)
 
 ## Development
 
